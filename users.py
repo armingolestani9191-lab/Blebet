@@ -10,11 +10,16 @@ from database import get_connection
 def get_user(user_id):
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
     cursor.execute(
         """
-        SELECT user_id, username, first_name, tokens
+        SELECT
+            user_id,
+            username,
+            first_name,
+            tokens
         FROM users
         WHERE user_id = ?
         """,
@@ -35,6 +40,7 @@ def create_user(
 ):
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
     cursor.execute(
@@ -54,6 +60,7 @@ def create_user(
     )
 
     connection.commit()
+
     connection.close()
 
 
@@ -73,7 +80,9 @@ def get_or_create_user(
             first_name
         )
 
-        user = get_user(user_id)
+        user = get_user(
+            user_id
+        )
 
     return user
 
@@ -84,9 +93,12 @@ def get_or_create_user(
 
 def update_activity(user_id):
 
-    now = int(time.time())
+    now = int(
+        time.time()
+    )
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
     cursor.execute(
@@ -101,18 +113,25 @@ def update_activity(user_id):
         DO UPDATE SET
             last_activity = excluded.last_activity
         """,
-        (user_id, now)
+        (
+            user_id,
+            now
+        )
     )
 
     connection.commit()
+
     connection.close()
 
 
 def get_active_users():
 
-    five_minutes_ago = int(time.time()) - 300
+    five_minutes_ago = (
+        int(time.time()) - 300
+    )
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
     cursor.execute(
@@ -121,7 +140,9 @@ def get_active_users():
         FROM user_activity
         WHERE last_activity >= ?
         """,
-        (five_minutes_ago,)
+        (
+            five_minutes_ago,
+        )
     )
 
     result = cursor.fetchone()
@@ -129,6 +150,7 @@ def get_active_users():
     connection.close()
 
     if result is None:
+
         return 0
 
     return result[0]
