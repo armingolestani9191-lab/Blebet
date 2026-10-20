@@ -9,10 +9,17 @@ from config import DATABASE_PATH
 
 
 def get_connection():
-    folder = os.path.dirname(DATABASE_PATH)
+
+    folder = os.path.dirname(
+        DATABASE_PATH
+    )
 
     if folder:
-        os.makedirs(folder, exist_ok=True)
+
+        os.makedirs(
+            folder,
+            exist_ok=True
+        )
 
     return sqlite3.connect(
         DATABASE_PATH,
@@ -23,9 +30,13 @@ def get_connection():
 def init_database():
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
+    # ======================================
     # کاربران
+    # ======================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -36,7 +47,10 @@ def init_database():
         )
     """)
 
+    # ======================================
     # فعالیت کاربران
+    # ======================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_activity (
             user_id INTEGER PRIMARY KEY,
@@ -44,5 +58,32 @@ def init_database():
         )
     """)
 
+    # ======================================
+    # دعوت‌ها
+    # ======================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            referred_user_id INTEGER PRIMARY KEY,
+            referrer_user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # ======================================
+    # تراکنش‌های ژتون
+    # ======================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS token_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     connection.commit()
+
     connection.close()
