@@ -2,7 +2,7 @@
 # BaleBet - Configuration
 # ==========================================
 
-BOT_TOKEN = "توکن_جدید_بات_اینجا"
+BOT_TOKEN = "1890789351:hT1Eo1Rox1kfOD9hPQ_eXenHOSTUxiZyrko"
 
 ADMIN_ID = 595450272
 
