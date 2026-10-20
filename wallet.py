@@ -7,7 +7,9 @@ from config import TOKEN_VALUE
 
 
 def get_balance(user_id):
+
     connection = get_connection()
+
     cursor = connection.cursor()
 
     cursor.execute(
@@ -24,20 +26,29 @@ def get_balance(user_id):
     connection.close()
 
     if result is None:
+
         return 0
 
     return result[0]
 
 
 def get_balance_value(tokens):
+
     return tokens * TOKEN_VALUE
 
 
-def add_tokens(user_id, amount):
+def add_tokens(
+    user_id,
+    amount,
+    reason="دریافت ژتون"
+):
+
     if amount <= 0:
+
         return False
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
     cursor.execute(
@@ -46,22 +57,55 @@ def add_tokens(user_id, amount):
         SET tokens = tokens + ?
         WHERE user_id = ?
         """,
-        (amount, user_id)
+        (
+            amount,
+            user_id
+        )
     )
 
-    success = cursor.rowcount > 0
+    if cursor.rowcount == 0:
+
+        connection.rollback()
+
+        connection.close()
+
+        return False
+
+    cursor.execute(
+        """
+        INSERT INTO token_transactions (
+            user_id,
+            amount,
+            reason
+        )
+        VALUES (?, ?, ?)
+        """,
+        (
+            user_id,
+            amount,
+            reason
+        )
+    )
 
     connection.commit()
+
     connection.close()
 
-    return success
+    return True
 
 
-def remove_tokens(user_id, amount):
+def remove_tokens(
+    user_id,
+    amount,
+    reason="مصرف ژتون"
+):
+
     if amount <= 0:
+
         return False
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
     cursor.execute(
@@ -71,12 +115,39 @@ def remove_tokens(user_id, amount):
         WHERE user_id = ?
         AND tokens >= ?
         """,
-        (amount, user_id, amount)
+        (
+            amount,
+            user_id,
+            amount
+        )
     )
 
-    success = cursor.rowcount > 0
+    if cursor.rowcount == 0:
+
+        connection.rollback()
+
+        connection.close()
+
+        return False
+
+    cursor.execute(
+        """
+        INSERT INTO token_transactions (
+            user_id,
+            amount,
+            reason
+        )
+        VALUES (?, ?, ?)
+        """,
+        (
+            user_id,
+            -amount,
+            reason
+        )
+    )
 
     connection.commit()
+
     connection.close()
 
-    return success
+    return True
