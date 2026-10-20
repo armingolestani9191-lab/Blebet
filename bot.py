@@ -23,7 +23,21 @@ from wallet import (
     get_balance_value
 )
 
-from config import TOKEN_VALUE
+from referral import (
+    create_referral,
+    get_referral_count
+)
+
+from games import (
+    spin_wheel
+)
+
+from config import (
+    TOKEN_VALUE,
+    REFERRER_REWARD,
+    REFERRED_REWARD,
+    SPIN_COST
+)
 
 
 # ==========================================
@@ -34,6 +48,7 @@ def main_keyboard():
 
     return json.dumps({
         "inline_keyboard": [
+
             [
                 {
                     "text": "🎮 بازی‌ها",
@@ -44,32 +59,67 @@ def main_keyboard():
                     "callback_data": "wallet"
                 }
             ],
+
             [
                 {
                     "text": "🎁 جایزه روزانه",
                     "callback_data": "daily"
                 },
                 {
-                    "text": "👤 حساب من",
-                    "callback_data": "profile"
+                    "text": "👥 دعوت دوستان",
+                    "callback_data": "referral"
                 }
             ],
+
             [
+                {
+                    "text": "👤 حساب من",
+                    "callback_data": "profile"
+                },
                 {
                     "text": "🏆 رتبه‌بندی",
                     "callback_data": "ranking"
-                },
+                }
+            ],
+
+            [
                 {
                     "text": "📜 تاریخچه",
                     "callback_data": "history"
-                }
-            ],
-            [
+                },
                 {
                     "text": "ℹ️ راهنما",
                     "callback_data": "help"
                 }
             ]
+
+        ]
+    })
+
+
+# ==========================================
+# کیبورد بازی‌ها
+# ==========================================
+
+def games_keyboard():
+
+    return json.dumps({
+        "inline_keyboard": [
+
+            [
+                {
+                    "text": "🎡 چرخونه",
+                    "callback_data": "wheel"
+                }
+            ],
+
+            [
+                {
+                    "text": "‹ بازگشت به منو",
+                    "callback_data": "home"
+                }
+            ]
+
         ]
     })
 
@@ -82,12 +132,14 @@ def back_keyboard():
 
     return json.dumps({
         "inline_keyboard": [
+
             [
                 {
                     "text": "‹ بازگشت به منو",
                     "callback_data": "home"
                 }
             ]
+
         ]
     })
 
@@ -98,18 +150,25 @@ def back_keyboard():
 
 def main_text(user_id):
 
-    tokens = get_balance(user_id)
+    tokens = get_balance(
+        user_id
+    )
 
-    value = get_balance_value(tokens)
+    value = get_balance_value(
+        tokens
+    )
 
     active_users = get_active_users()
 
     return (
         "🎰 <b>BaleBet</b>\n\n"
         "🍀 خوش اومدی! شانس با توئه.\n\n"
-        f"🟢 کاربران درحال بازی: <b>{active_users:,}</b> نفر\n\n"
-        f"🪙 موجودی ژتون: <b>{tokens:,}</b>\n"
-        f"💵 ارزش کل به تومان: <b>{value:,}</b>\n\n"
+        f"🟢 کاربران درحال بازی: "
+        f"<b>{active_users:,}</b> نفر\n\n"
+        f"🪙 موجودی ژتون: "
+        f"<b>{tokens:,}</b>\n"
+        f"💵 ارزش کل به تومان: "
+        f"<b>{value:,}</b>\n\n"
         "👇 انتخاب کن:"
     )
 
@@ -130,7 +189,33 @@ def register_user_activity(
         first_name
     )
 
-    update_activity(user_id)
+    update_activity(
+        user_id
+    )
+
+
+# ==========================================
+# متن دعوت دوستان
+# ==========================================
+
+def referral_text(user_id):
+
+    count = get_referral_count(
+        user_id
+    )
+
+    return (
+        "👥 <b>دعوت دوستان</b>\n\n"
+        "🎁 دوستات رو دعوت کن و ژتون بگیر!\n\n"
+        f"👤 پاداش شما: "
+        f"<b>{REFERRER_REWARD}</b> ژتون\n"
+        f"🎁 پاداش دوستت: "
+        f"<b>{REFERRED_REWARD}</b> ژتون\n\n"
+        f"👥 تعداد دعوت‌های موفق: "
+        f"<b>{count}</b>\n\n"
+        "🔗 لینک دعوت اختصاصی شما:\n"
+        "<code>لینک در تنظیمات بات قرار می‌گیرد</code>"
+    )
 
 
 # ==========================================
@@ -154,11 +239,16 @@ def handle_message(message):
         ""
     )
 
-    chat_id = chat.get("id")
+    chat_id = chat.get(
+        "id"
+    )
 
-    user_id = user.get("id")
+    user_id = user.get(
+        "id"
+    )
 
     if not chat_id or not user_id:
+
         return
 
     username = user.get(
@@ -182,6 +272,39 @@ def handle_message(message):
 
     if text.startswith("/start"):
 
+        parts = text.split(
+            maxsplit=1
+        )
+
+        # ------------------------------
+        # بررسی لینک دعوت
+        # ------------------------------
+
+        if len(parts) == 2:
+
+            payload = parts[1].strip()
+
+            if payload.startswith("ref_"):
+
+                try:
+
+                    referrer_id = int(
+                        payload[4:]
+                    )
+
+                    create_referral(
+                        referrer_id,
+                        user_id
+                    )
+
+                except ValueError:
+
+                    pass
+
+        # ------------------------------
+        # نمایش منو
+        # ------------------------------
+
         send_message(
             chat_id,
             main_text(user_id),
@@ -195,9 +318,13 @@ def handle_message(message):
 
 def handle_callback(callback):
 
-    callback_id = callback.get("id")
+    callback_id = callback.get(
+        "id"
+    )
 
-    data = callback.get("data")
+    data = callback.get(
+        "data"
+    )
 
     message = callback.get(
         "message",
@@ -209,7 +336,9 @@ def handle_callback(callback):
         {}
     )
 
-    chat_id = chat.get("id")
+    chat_id = chat.get(
+        "id"
+    )
 
     message_id = message.get(
         "message_id"
@@ -220,7 +349,9 @@ def handle_callback(callback):
         {}
     )
 
-    user_id = user.get("id")
+    user_id = user.get(
+        "id"
+    )
 
     if callback_id:
 
@@ -233,11 +364,8 @@ def handle_callback(callback):
         or not message_id
         or not user_id
     ):
-        return
 
-    # ======================================
-    # ثبت فعالیت
-    # ======================================
+        return
 
     username = user.get(
         "username"
@@ -270,12 +398,194 @@ def handle_callback(callback):
         return
 
     # ======================================
+    # بازی‌ها
+    # ======================================
+
+    if data == "games":
+
+        text = (
+            "🎮 <b>بازی‌ها</b>\n\n"
+            "🎡 <b>چرخونه</b>\n"
+            f"هر چرخش: <b>{SPIN_COST}</b> ژتون\n\n"
+            "👇 بازی موردنظرت رو انتخاب کن:"
+        )
+
+        edit_message_text(
+            chat_id,
+            message_id,
+            text,
+            games_keyboard()
+        )
+
+        return
+
+    # ======================================
+    # چرخونه
+    # ======================================
+
+    if data == "wheel":
+
+        balance = get_balance(
+            user_id
+        )
+
+        text = (
+            "🎡 <b>چرخونه شانس</b>\n\n"
+            f"🪙 هزینه هر چرخش: "
+            f"<b>{SPIN_COST}</b> ژتون\n\n"
+            f"💰 موجودی شما: "
+            f"<b>{balance}</b> ژتون\n\n"
+            "🎁 شاید جایزه ۵۰ ژتونی نصیبت بشه!"
+        )
+
+        keyboard = json.dumps({
+            "inline_keyboard": [
+
+                [
+                    {
+                        "text": "🎡 چرخوندن",
+                        "callback_data": "spin"
+                    }
+                ],
+
+                [
+                    {
+                        "text": "‹ بازگشت",
+                        "callback_data": "games"
+                    }
+                ]
+
+            ]
+        })
+
+        edit_message_text(
+            chat_id,
+            message_id,
+            text,
+            keyboard
+        )
+
+        return
+
+    # ======================================
+    # اجرای چرخونه
+    # ======================================
+
+    if data == "spin":
+
+        result = spin_wheel(
+            user_id
+        )
+
+        if not result.get(
+            "success"
+        ):
+
+            text = result.get(
+                "message",
+                "❌ خطایی رخ داد."
+            )
+
+            keyboard = json.dumps({
+                "inline_keyboard": [
+
+                    [
+                        {
+                            "text": "🎡 بازگشت به چرخونه",
+                            "callback_data": "wheel"
+                        }
+                    ],
+
+                    [
+                        {
+                            "text": "‹ بازگشت به منو",
+                            "callback_data": "home"
+                        }
+                    ]
+
+                ]
+            })
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                keyboard
+            )
+
+            return
+
+        reward = result[
+            "reward"
+        ]
+
+        name = result[
+            "name"
+        ]
+
+        new_balance = get_balance(
+            user_id
+        )
+
+        if reward > 0:
+
+            text = (
+                "🎉 <b>برنده شدی!</b>\n\n"
+                f"{name}\n\n"
+                f"🎁 جایزه: "
+                f"<b>{reward}</b> ژتون\n\n"
+                f"🪙 موجودی جدید: "
+                f"<b>{new_balance}</b> ژتون"
+            )
+
+        else:
+
+            text = (
+                "😅 <b>این بار پوچ شد!</b>\n\n"
+                f"{name}\n\n"
+                f"🪙 موجودی جدید: "
+                f"<b>{new_balance}</b> ژتون\n\n"
+                "دوباره شانست رو امتحان کن! 🎡"
+            )
+
+        keyboard = json.dumps({
+            "inline_keyboard": [
+
+                [
+                    {
+                        "text": "🎡 دوباره بچرخون",
+                        "callback_data": "spin"
+                    }
+                ],
+
+                [
+                    {
+                        "text": "‹ بازگشت",
+                        "callback_data": "games"
+                    }
+                ]
+
+            ]
+        })
+
+        edit_message_text(
+            chat_id,
+            message_id,
+            text,
+            keyboard
+        )
+
+        return
+
+    # ======================================
     # کیف پول
     # ======================================
 
     if data == "wallet":
 
-        tokens = get_balance(user_id)
+        tokens = get_balance(
+            user_id
+        )
 
         value = get_balance_value(
             tokens
@@ -283,10 +593,31 @@ def handle_callback(callback):
 
         text = (
             "🪙 <b>کیف پول شما</b>\n\n"
-            f"🪙 موجودی ژتون: <b>{tokens:,}</b>\n"
-            f"💵 ارزش کل به تومان: <b>{value:,}</b>\n\n"
+            f"🪙 موجودی ژتون: "
+            f"<b>{tokens:,}</b>\n"
+            f"💵 ارزش کل به تومان: "
+            f"<b>{value:,}</b>\n\n"
             f"📌 ارزش هر ژتون: "
             f"<b>{TOKEN_VALUE:,}</b> تومان"
+        )
+
+        edit_message_text(
+            chat_id,
+            message_id,
+            text,
+            back_keyboard()
+        )
+
+        return
+
+    # ======================================
+    # دعوت دوستان
+    # ======================================
+
+    if data == "referral":
+
+        text = referral_text(
+            user_id
         )
 
         edit_message_text(
@@ -304,7 +635,9 @@ def handle_callback(callback):
 
     if data == "profile":
 
-        tokens = get_balance(user_id)
+        tokens = get_balance(
+            user_id
+        )
 
         text = (
             "👤 <b>حساب من</b>\n\n"
@@ -312,27 +645,6 @@ def handle_callback(callback):
             f"<code>{user_id}</code>\n\n"
             f"🪙 موجودی ژتون: "
             f"<b>{tokens:,}</b>"
-        )
-
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
-
-        return
-
-    # ======================================
-    # بازی‌ها
-    # ======================================
-
-    if data == "games":
-
-        text = (
-            "🎮 <b>بازی‌ها</b>\n\n"
-            "🎲 بازی‌ها به‌زودی اینجا قرار می‌گیرن.\n\n"
-            "منتظر اولین بازی باش! 🔥"
         )
 
         edit_message_text(
@@ -420,6 +732,8 @@ def handle_callback(callback):
             "مشاهده موجودی ژتون\n\n"
             "🎁 <b>جایزه روزانه</b>\n"
             "دریافت پاداش روزانه\n\n"
+            "👥 <b>دعوت دوستان</b>\n"
+            "دریافت ژتون با دعوت دوستان\n\n"
             "👤 <b>حساب من</b>\n"
             "مشاهده اطلاعات حساب"
         )
@@ -442,7 +756,9 @@ def run():
 
     offset = None
 
-    print("🚀 BaleBet is running...")
+    print(
+        "🚀 BaleBet is running..."
+    )
 
     while True:
 
@@ -459,7 +775,9 @@ def run():
 
                 continue
 
-            if not result.get("ok"):
+            if not result.get(
+                "ok"
+            ):
 
                 time.sleep(2)
 
