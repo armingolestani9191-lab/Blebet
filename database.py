@@ -13,6 +13,7 @@ from config import DATABASE_PATH
 # ==========================================
 
 def get_connection():
+
     folder = os.path.dirname(
         DATABASE_PATH
     )
@@ -443,10 +444,6 @@ def find_user(
     connection = get_connection()
     cursor = connection.cursor()
 
-    # ======================================
-    # جستجو با آیدی عددی
-    # ======================================
-
     if query.lstrip("-").isdigit():
 
         try:
@@ -876,10 +873,6 @@ def change_user_tokens(
     connection = get_connection()
     cursor = connection.cursor()
 
-    # ======================================
-    # افزایش موجودی
-    # ======================================
-
     if amount > 0:
 
         cursor.execute("""
@@ -890,10 +883,6 @@ def change_user_tokens(
             amount,
             user_id
         ))
-
-    # ======================================
-    # کاهش موجودی
-    # ======================================
 
     else:
 
@@ -908,20 +897,12 @@ def change_user_tokens(
             abs(amount)
         ))
 
-    # ======================================
-    # کاربر پیدا نشد
-    # ======================================
-
     if cursor.rowcount == 0:
 
         connection.rollback()
         connection.close()
 
         return False
-
-    # ======================================
-    # ثبت تراکنش
-    # ======================================
 
     cursor.execute("""
         INSERT INTO token_transactions (

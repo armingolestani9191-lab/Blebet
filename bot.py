@@ -7,6 +7,17 @@ import time
 
 import api
 import config
+
+from database import (
+    init_database
+)
+
+# ==========================================
+# ساخت دیتابیس قبل از لود بازی‌ها
+# ==========================================
+
+init_database()
+
 import games
 import referral
 import wallet
@@ -964,4 +975,4 @@ def run():
 
             time.sleep(
                 2
-                    )
+            )

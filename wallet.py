@@ -23,6 +23,34 @@ def get_balance(user_id):
 
 
 # ==========================================
+# محاسبه ارزش موجودی به تومان
+# ==========================================
+
+def get_balance_value(tokens):
+
+    try:
+        tokens = int(
+            tokens
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+        return 0
+
+    try:
+        from admin import get_token_value
+
+        token_value = admin.get_token_value()
+
+    except Exception:
+        return 0
+
+    return tokens * token_value
+
+
+# ==========================================
 # افزایش موجودی
 # ==========================================
 
