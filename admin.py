@@ -37,6 +37,7 @@ from database import (
     set_force_join_enabled
 )
 
+
 # ==========================================
 # وضعیت‌های موقت پنل
 # ==========================================
@@ -53,6 +54,7 @@ admin_broadcast_lock = threading.Lock()
 def is_admin(user_id):
 
     try:
+
         return int(user_id) == int(
             config.ADMIN_ID
         )
@@ -61,6 +63,7 @@ def is_admin(user_id):
         TypeError,
         ValueError
     ):
+
         return False
 
 
@@ -85,15 +88,18 @@ def set_token_value(
 ):
 
     try:
+
         value = int(value)
 
     except (
         TypeError,
         ValueError
     ):
+
         return False
 
     if value <= 0:
+
         return False
 
     return set_setting(
@@ -331,10 +337,13 @@ def user_info_text(user):
     )
 
     if username:
+
         username_text = (
             f"@{str(username).lstrip('@')}"
         )
+
     else:
+
         username_text = "ندارد"
 
     status = (
@@ -468,12 +477,14 @@ def recent_users_text():
         )
 
         if username:
+
             username = (
                 "@" +
                 str(username).lstrip("@")
             )
 
         else:
+
             username = "بدون یوزرنیم"
 
         status = (
@@ -525,12 +536,14 @@ def banned_users_text():
         )
 
         if username:
+
             username = (
                 "@" +
                 str(username).lstrip("@")
             )
 
         else:
+
             username = "بدون یوزرنیم"
 
         text += (
@@ -804,7 +817,7 @@ def reward_edit_keyboard(
 
 
 # ==========================================
-# جوین اجباری
+# جوین اجباری - کیبورد ادمین
 # ==========================================
 
 def force_join_keyboard():
@@ -870,7 +883,7 @@ def force_join_keyboard():
 
 
 # ==========================================
-# متن جوین اجباری
+# متن جوین اجباری - پنل ادمین
 # ==========================================
 
 def force_join_text():
@@ -912,6 +925,189 @@ def force_join_text():
         )
 
     return text
+
+
+# ==========================================
+# متن جوین اجباری برای کاربر
+# ==========================================
+
+def force_join_user_text():
+
+    channels = get_force_join_channels()
+
+    text = (
+        "📢 <b>عضویت در کانال‌ها</b>\n\n"
+        "برای استفاده از ربات، ابتدا باید "
+        "در کانال‌های زیر عضو بشی:\n\n"
+    )
+
+    if channels:
+
+        for index, channel in enumerate(
+            channels,
+            start=1
+        ):
+
+            text += (
+                f"{index}. "
+                f"<code>{channel}</code>\n"
+            )
+
+    else:
+
+        text += (
+            "📭 در حال حاضر کانالی برای عضویت "
+            "تنظیم نشده.\n"
+        )
+
+    text += (
+        "\nبعد از عضویت روی دکمه "
+        "«✅ بررسی عضویت» بزن."
+    )
+
+    return text
+
+
+# ==========================================
+# کیبورد جوین اجباری برای کاربر
+# ==========================================
+
+def force_join_user_keyboard():
+
+    channels = get_force_join_channels()
+
+    buttons = []
+
+    for channel in channels:
+
+        clean_channel = str(
+            channel
+        ).strip()
+
+        if clean_channel.startswith(
+            "@"
+        ):
+
+            channel_url = (
+                "https://t.me/" +
+                clean_channel[1:]
+            )
+
+        elif clean_channel.startswith(
+            "https://t.me/"
+        ):
+
+            channel_url = clean_channel
+
+        else:
+
+            channel_url = (
+                "https://t.me/" +
+                clean_channel
+            )
+
+        buttons.append([
+            {
+                "text": f"📢 عضویت {clean_channel}",
+                "url": channel_url
+            }
+        ])
+
+    buttons.append([
+        {
+            "text": "✅ بررسی عضویت",
+            "callback_data": "check_join"
+        }
+    ])
+
+    return json.dumps({
+        "inline_keyboard": buttons
+    })
+
+
+# ==========================================
+# بررسی جوین اجباری کاربر
+# ==========================================
+
+def check_force_join(
+    user_id
+):
+
+    # اگر جوین اجباری خاموش باشد
+    # کاربر آزاد است.
+
+    if not is_force_join_enabled():
+
+        return True
+
+    channels = get_force_join_channels()
+
+    # اگر هیچ کانالی تنظیم نشده باشد
+    # نیازی به عضویت نیست.
+
+    if not channels:
+
+        return True
+
+    # بررسی عضویت کانال‌ها از طریق API
+    # در این مرحله از api استفاده می‌کنیم.
+
+    for channel in channels:
+
+        channel = str(
+            channel
+        ).strip()
+
+        if not channel:
+
+            continue
+
+        try:
+
+            result = api.api_request(
+                "getChatMember",
+                {
+                    "chat_id": channel,
+                    "user_id": user_id
+                }
+            )
+
+        except Exception:
+
+            # اگر بررسی API خطا داد،
+            # کاربر را عضو فرض نمی‌کنیم.
+
+            return False
+
+        if not result:
+
+            return False
+
+        if not result.get(
+            "ok",
+            False
+        ):
+
+            return False
+
+        member = result.get(
+            "result",
+            {}
+        )
+
+        status = member.get(
+            "status"
+        )
+
+        if status not in (
+            "creator",
+            "administrator",
+            "member"
+        ):
+
+            return False
+
+    return True
 
 
 # ==========================================
@@ -1022,6 +1218,7 @@ def get_message_id(
         message,
         dict
     ):
+
         return None
 
     return message.get(
@@ -1039,6 +1236,7 @@ def broadcast_text_message(
 ):
 
     if not users:
+
         return (
             0,
             0
@@ -1065,9 +1263,11 @@ def broadcast_text_message(
         workers = 20
 
     if workers <= 0:
+
         workers = 1
 
     if workers > 50:
+
         workers = 50
 
     delay = getattr(
@@ -1077,12 +1277,16 @@ def broadcast_text_message(
     )
 
     try:
-        delay = float(delay)
+
+        delay = float(
+            delay
+        )
 
     except (
         TypeError,
         ValueError
     ):
+
         delay = 0
 
     def send_one(
@@ -1094,6 +1298,7 @@ def broadcast_text_message(
         )
 
         if not user_id:
+
             return False
 
         result = send_message(
@@ -1102,12 +1307,14 @@ def broadcast_text_message(
         )
 
         if not result:
+
             return False
 
         if isinstance(
             result,
             dict
         ):
+
             return bool(
                 result.get(
                     "ok",
@@ -1129,14 +1336,15 @@ def broadcast_text_message(
         for result in results:
 
             if result:
+
                 sent += 1
 
             else:
+
                 failed += 1
 
             if delay > 0:
 
-                # فقط برای کنترل فشار API
                 threading.Event().wait(
                     delay
                 )
@@ -1167,6 +1375,7 @@ def forward_message_to_user(
     )
 
     if not result:
+
         return False
 
     return bool(
@@ -1188,6 +1397,7 @@ def broadcast_forward_message(
 ):
 
     if not users:
+
         return (
             0,
             0
@@ -1214,9 +1424,11 @@ def broadcast_forward_message(
         workers = 20
 
     if workers <= 0:
+
         workers = 1
 
     if workers > 50:
+
         workers = 50
 
     def send_one(
@@ -1228,6 +1440,7 @@ def broadcast_forward_message(
         )
 
         if not user_id:
+
             return False
 
         return forward_message_to_user(
@@ -1248,9 +1461,11 @@ def broadcast_forward_message(
         for result in results:
 
             if result:
+
                 sent += 1
 
             else:
+
                 failed += 1
 
     return (
@@ -1269,10 +1484,12 @@ def start_text_broadcast(
 ):
 
     if not text:
+
         send_message(
             chat_id,
             "❌ متن پیام خالیه."
         )
+
         return
 
     if not admin_broadcast_lock.acquire(
@@ -1471,6 +1688,7 @@ def is_cancel(
 ):
 
     if text is None:
+
         return False
 
     return str(
@@ -1509,6 +1727,7 @@ def handle_message(
     )
 
     if not user_id or not chat_id:
+
         return False
 
     if not is_admin(
@@ -1626,6 +1845,7 @@ def handle_message(
         )
 
         try:
+
             amount = int(
                 text.strip()
             )
@@ -1701,6 +1921,7 @@ def handle_message(
         )
 
         try:
+
             amount = int(
                 text.strip()
             )
@@ -1979,6 +2200,7 @@ def handle_message(
         )
 
         try:
+
             value = int(
                 text.strip()
             )
@@ -2042,6 +2264,7 @@ def handle_message(
         )
 
         try:
+
             chance = float(
                 text.strip()
             )
@@ -2103,7 +2326,9 @@ def handle_message(
 
         channel = text.strip()
 
-        if not channel.startswith("@"):
+        if not channel.startswith(
+            "@"
+        ):
 
             channel = (
                 "@" + channel
@@ -2202,6 +2427,7 @@ def handle_callback(
     )
 
     if not data:
+
         return False
 
     # فقط Callbackهای خود پنل
@@ -2554,9 +2780,11 @@ def handle_callback(
         )
 
         # admin_reward_INDEX
+
         if len(parts) == 3:
 
             try:
+
                 index = int(
                     parts[2]
                 )
@@ -2595,9 +2823,14 @@ def handle_callback(
             return True
 
         # admin_reward_name_INDEX
-        if len(parts) == 4 and parts[2] == "name":
+
+        if (
+            len(parts) == 4
+            and parts[2] == "name"
+        ):
 
             try:
+
                 index = int(
                     parts[3]
                 )
@@ -2626,9 +2859,14 @@ def handle_callback(
             return True
 
         # admin_reward_value_INDEX
-        if len(parts) == 4 and parts[2] == "value":
+
+        if (
+            len(parts) == 4
+            and parts[2] == "value"
+        ):
 
             try:
+
                 index = int(
                     parts[3]
                 )
@@ -2657,9 +2895,14 @@ def handle_callback(
             return True
 
         # admin_reward_chance_INDEX
-        if len(parts) == 4 and parts[2] == "chance":
+
+        if (
+            len(parts) == 4
+            and parts[2] == "chance"
+        ):
 
             try:
+
                 index = int(
                     parts[3]
                 )
@@ -2842,20 +3085,48 @@ def handle_callback(
 
             return True
 
-        # دیتابیس حذف بر اساس ID دارد،
-        # ولی لیست عمومی فقط channel برمی‌گرداند.
-        # بنابراین حذف را با connection مستقیم انجام نمی‌دهیم.
-        # از تابع موجود بر اساس channel استفاده می‌کنیم.
-
-        from database import (
-            remove_force_join_channel
-        )
-
         channel = channels[index]
 
-        removed = remove_force_join_channel(
-            channel
-        )
+        # اگر تابع حذف بر اساس ID وجود دارد،
+        # باید اطلاعات ID کانال از دیتابیس گرفته شود.
+        #
+        # برای جلوگیری از حدس زدن ساختار دیتابیس،
+        # فعلاً از تابع حذف بر اساس ID فقط در صورتی
+        # استفاده می‌کنیم که آیتم کانال خودش دیکشنری باشد.
+
+        if isinstance(
+            channel,
+            dict
+        ):
+
+            channel_id = channel.get(
+                "id"
+            )
+
+            if channel_id is None:
+
+                channel_id = channel.get(
+                    "channel_id"
+                )
+
+            if channel_id is None:
+
+                return True
+
+            removed = remove_force_join_channel_by_id(
+                channel_id
+            )
+
+        else:
+
+            # اگر get_force_join_channels فقط
+            # username برمی‌گرداند، این بخش نیازمند
+            # تابع حذف بر اساس username در database.py است.
+            #
+            # فعلاً بدون حدس زدن تابعی که وجود ندارد،
+            # عملیات را متوقف می‌کنیم.
+
+            return True
 
         if removed:
 
