@@ -16,6 +16,10 @@ from wallet import (
 )
 
 
+# ==========================================
+# اعتبارسنجی جوایز چرخونه
+# ==========================================
+
 def validate_spin_rewards():
 
     total = sum(
@@ -25,6 +29,248 @@ def validate_spin_rewards():
 
     return abs(total - 100) < 0.000001
 
+
+# ==========================================
+# دریافت تنظیمات چرخونه
+# ==========================================
+
+def get_spin_settings():
+
+    return {
+        "cost": SPIN_COST,
+        "rewards": SPIN_REWARDS
+    }
+
+
+# ==========================================
+# بررسی تنظیمات جایزه
+# ==========================================
+
+def validate_reward_list(rewards):
+
+    if not isinstance(
+        rewards,
+        list
+    ):
+
+        return False
+
+    if not rewards:
+
+        return False
+
+    total_chance = 0
+
+    for item in rewards:
+
+        if not isinstance(
+            item,
+            dict
+        ):
+
+            return False
+
+        if (
+            "name" not in item
+            or "reward" not in item
+            or "chance" not in item
+        ):
+
+            return False
+
+        try:
+
+            reward = int(
+                item["reward"]
+            )
+
+            chance = float(
+                item["chance"]
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            return False
+
+        if reward < 0:
+
+            return False
+
+        if chance < 0:
+
+            return False
+
+        total_chance += chance
+
+    return abs(
+        total_chance - 100
+    ) < 0.000001
+
+
+# ==========================================
+# تغییر هزینه چرخونه
+# ==========================================
+
+def set_spin_cost(
+    new_cost
+):
+
+    global SPIN_COST
+
+    try:
+
+        new_cost = int(
+            new_cost
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+    if new_cost <= 0:
+
+        return False
+
+    SPIN_COST = new_cost
+
+    return True
+
+
+# ==========================================
+# تغییر جوایز چرخونه
+# ==========================================
+
+def set_spin_rewards(
+    rewards
+):
+
+    global SPIN_REWARDS
+
+    if not validate_reward_list(
+        rewards
+    ):
+
+        return False
+
+    SPIN_REWARDS = rewards
+
+    return True
+
+
+# ==========================================
+# تغییر یک جایزه مشخص
+# ==========================================
+
+def update_spin_reward(
+    index,
+    name=None,
+    reward=None,
+    chance=None
+):
+
+    global SPIN_REWARDS
+
+    try:
+
+        index = int(
+            index
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+    if (
+        index < 0
+        or index >= len(SPIN_REWARDS)
+    ):
+
+        return False
+
+    new_rewards = [
+        dict(item)
+        for item in SPIN_REWARDS
+    ]
+
+    item = new_rewards[index]
+
+    if name is not None:
+
+        name = str(
+            name
+        ).strip()
+
+        if not name:
+
+            return False
+
+        item["name"] = name
+
+    if reward is not None:
+
+        try:
+
+            reward = int(
+                reward
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            return False
+
+        if reward < 0:
+
+            return False
+
+        item["reward"] = reward
+
+    if chance is not None:
+
+        try:
+
+            chance = float(
+                chance
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            return False
+
+        if chance < 0:
+
+            return False
+
+        item["chance"] = chance
+
+    if not validate_reward_list(
+        new_rewards
+    ):
+
+        return False
+
+    SPIN_REWARDS = new_rewards
+
+    return True
+
+
+# ==========================================
+# چرخاندن چرخونه
+# ==========================================
 
 def spin_wheel(user_id):
 
@@ -37,7 +283,9 @@ def spin_wheel(user_id):
         }
 
     # بررسی موجودی
-    balance = get_balance(user_id)
+    balance = get_balance(
+        user_id
+    )
 
     if balance < SPIN_COST:
 
@@ -67,7 +315,9 @@ def spin_wheel(user_id):
         }
 
     # انتخاب جایزه
-    rewards = list(SPIN_REWARDS)
+    rewards = list(
+        SPIN_REWARDS
+    )
 
     weights = [
         float(item["chance"])

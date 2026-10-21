@@ -3,21 +3,141 @@
 # ==========================================
 
 from database import get_connection
-from config import (
-    REFERRER_REWARD,
-    REFERRED_REWARD
-)
+
+import config
 
 from wallet import add_tokens
 
+
+# ==========================================
+# تنظیمات پاداش
+# ==========================================
+
+REFERRER_REWARD = config.REFERRER_REWARD
+REFERRED_REWARD = config.REFERRED_REWARD
+
+
+# ==========================================
+# دریافت تنظیمات Referral
+# ==========================================
+
+def get_referral_settings():
+
+    return {
+        "referrer_reward": REFERRER_REWARD,
+        "referred_reward": REFERRED_REWARD
+    }
+
+
+# ==========================================
+# تغییر پاداش دعوت‌کننده
+# ==========================================
+
+def set_referrer_reward(
+    amount
+):
+
+    global REFERRER_REWARD
+
+    try:
+
+        amount = int(
+            amount
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+    if amount < 0:
+
+        return False
+
+    REFERRER_REWARD = amount
+
+    return True
+
+
+# ==========================================
+# تغییر پاداش دعوت‌شونده
+# ==========================================
+
+def set_referred_reward(
+    amount
+):
+
+    global REFERRED_REWARD
+
+    try:
+
+        amount = int(
+            amount
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+    if amount < 0:
+
+        return False
+
+    REFERRED_REWARD = amount
+
+    return True
+
+
+# ==========================================
+# بررسی پاداش‌ها
+# ==========================================
+
+def validate_rewards():
+
+    try:
+
+        if REFERRER_REWARD < 0:
+
+            return False
+
+        if REFERRED_REWARD < 0:
+
+            return False
+
+        return True
+
+    except Exception:
+
+        return False
+
+
+# ==========================================
+# ساخت دعوت
+# ==========================================
 
 def create_referral(
     referrer_id,
     referred_id
 ):
 
+    # ======================================
     # دعوت خود شخص
+    # ======================================
+
     if referrer_id == referred_id:
+
+        return False
+
+    # ======================================
+    # بررسی تنظیمات
+    # ======================================
+
+    if not validate_rewards():
 
         return False
 
@@ -25,14 +145,19 @@ def create_referral(
 
     cursor = connection.cursor()
 
+    # ======================================
     # آیا قبلاً دعوت شده؟
+    # ======================================
+
     cursor.execute(
         """
         SELECT referred_user_id
         FROM referrals
         WHERE referred_user_id = ?
         """,
-        (referred_id,)
+        (
+            referred_id,
+        )
     )
 
     existing = cursor.fetchone()
@@ -43,14 +168,19 @@ def create_referral(
 
         return False
 
+    # ======================================
     # بررسی وجود دعوت‌کننده
+    # ======================================
+
     cursor.execute(
         """
         SELECT user_id
         FROM users
         WHERE user_id = ?
         """,
-        (referrer_id,)
+        (
+            referrer_id,
+        )
     )
 
     referrer = cursor.fetchone()
@@ -61,7 +191,10 @@ def create_referral(
 
         return False
 
+    # ======================================
     # ثبت دعوت
+    # ======================================
+
     cursor.execute(
         """
         INSERT INTO referrals (
@@ -80,7 +213,10 @@ def create_referral(
 
     connection.close()
 
+    # ======================================
     # جایزه دعوت‌کننده
+    # ======================================
+
     if REFERRER_REWARD > 0:
 
         add_tokens(
@@ -89,7 +225,10 @@ def create_referral(
             "🎁 پاداش دعوت دوست"
         )
 
+    # ======================================
     # جایزه کاربر جدید
+    # ======================================
+
     if REFERRED_REWARD > 0:
 
         add_tokens(
@@ -101,7 +240,13 @@ def create_referral(
     return True
 
 
-def get_referral_count(user_id):
+# ==========================================
+# تعداد دعوت‌های موفق
+# ==========================================
+
+def get_referral_count(
+    user_id
+):
 
     connection = get_connection()
 
@@ -113,7 +258,9 @@ def get_referral_count(user_id):
         FROM referrals
         WHERE referrer_user_id = ?
         """,
-        (user_id,)
+        (
+            user_id,
+        )
     )
 
     result = cursor.fetchone()
