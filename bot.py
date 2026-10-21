@@ -39,6 +39,7 @@ from games import (
     spin_wheel
 )
 
+
 # ==========================================
 # کیبورد اصلی
 # ==========================================
@@ -226,153 +227,6 @@ def referral_text(user_id):
 
 
 # ==========================================
-# بررسی عضویت کاربر
-# ==========================================
-
-def check_force_join(user_id):
-
-    from database import (
-        get_bool_setting,
-        get_force_join_channels
-    )
-
-    enabled = get_bool_setting(
-        "force_join_enabled",
-        False
-    )
-
-    if not enabled:
-
-        return True
-
-    channels = get_force_join_channels()
-
-    if not channels:
-
-        return True
-
-    for channel in channels:
-
-        try:
-
-            result = api.api_request(
-                "getChatMember",
-                {
-                    "chat_id": channel,
-                    "user_id": user_id
-                }
-            )
-
-            if not result:
-
-                return False
-
-            if not result.get(
-                "ok",
-                False
-            ):
-
-                return False
-
-            member = result.get(
-                "result",
-                {}
-            )
-
-            status = member.get(
-                "status"
-            )
-
-            if status not in (
-                "creator",
-                "administrator",
-                "member"
-            ):
-
-                return False
-
-        except Exception:
-
-            return False
-
-    return True
-
-
-# ==========================================
-# پیام جوین اجباری
-# ==========================================
-
-def force_join_text():
-
-    from database import (
-        get_force_join_channels
-    )
-
-    channels = get_force_join_channels()
-
-    text = (
-        "🔒 <b>عضویت اجباری</b>\n\n"
-        "برای استفاده از ربات باید اول "
-        "در کانال‌های زیر عضو بشی:\n\n"
-    )
-
-    for channel in channels:
-
-        text += (
-            f"📢 <code>{channel}</code>\n"
-        )
-
-    text += (
-        "\n✅ بعد از عضویت دوباره /start "
-        "رو بزن."
-    )
-
-    return text
-
-
-# ==========================================
-# کیبورد جوین اجباری کاربر
-# ==========================================
-
-def force_join_keyboard():
-
-    from database import (
-        get_force_join_channels
-    )
-
-    channels = get_force_join_channels()
-
-    rows = []
-
-    for channel in channels:
-
-        clean = str(
-            channel
-        ).replace(
-            "@",
-            ""
-        )
-
-        rows.append([
-            {
-                "text": f"📢 عضویت در {channel}",
-                "url": f"https://ble.ir/{clean}"
-            }
-        ])
-
-    rows.append([
-        {
-            "text": "✅ بررسی عضویت",
-            "callback_data": "check_join"
-        }
-    ])
-
-    return json.dumps({
-        "inline_keyboard": rows
-    })
-
-
-# ==========================================
 # پردازش پیام
 # ==========================================
 
@@ -421,7 +275,7 @@ def handle_message(message):
     )
 
     # ======================================
-    # انتقال کامل پنل ادمین
+    # پنل ادمین
     # ======================================
 
     if admin.handle_message(
@@ -437,19 +291,21 @@ def handle_message(message):
     if text.startswith("/start"):
 
         # بررسی جوین اجباری
+        # منطق مربوط به مدیریت تنظیمات
+        # در admin.py قرار دارد.
 
         if not admin.is_admin(
             user_id
         ):
 
-            if not check_force_join(
+            if not admin.check_force_join(
                 user_id
             ):
 
                 send_message(
                     chat_id,
-                    force_join_text(),
-                    force_join_keyboard()
+                    admin.force_join_user_text(),
+                    admin.force_join_user_keyboard()
                 )
 
                 return
@@ -569,7 +425,7 @@ def handle_callback(callback):
     )
 
     # ======================================
-    # انتقال کامل Callbackهای پنل
+    # پنل ادمین
     # ======================================
 
     if admin.handle_callback(
@@ -588,15 +444,15 @@ def handle_callback(callback):
             user_id
         ):
 
-            if not check_force_join(
+            if not admin.check_force_join(
                 user_id
             ):
 
                 edit_message_text(
                     chat_id,
                     message_id,
-                    force_join_text(),
-                    force_join_keyboard()
+                    admin.force_join_user_text(),
+                    admin.force_join_user_keyboard()
                 )
 
                 return
@@ -607,7 +463,7 @@ def handle_callback(callback):
 
     if data == "check_join":
 
-        if check_force_join(
+        if admin.check_force_join(
             user_id
         ):
 
@@ -623,8 +479,8 @@ def handle_callback(callback):
             edit_message_text(
                 chat_id,
                 message_id,
-                force_join_text(),
-                force_join_keyboard()
+                admin.force_join_user_text(),
+                admin.force_join_user_keyboard()
             )
 
         return
