@@ -2,7 +2,12 @@
 # BaleBet - Referral System
 # ==========================================
 
-from database import get_connection
+from database import (
+    get_connection,
+    get_setting,
+    get_int_setting,
+    set_setting,
+)
 
 import config
 
@@ -18,14 +23,38 @@ REFERRED_REWARD = config.REFERRED_REWARD
 
 
 # ==========================================
+# دریافت پاداش دعوت‌کننده
+# ==========================================
+
+def get_referrer_reward():
+
+    return get_int_setting(
+        "referrer_reward",
+        REFERRER_REWARD
+    )
+
+
+# ==========================================
+# دریافت پاداش دعوت‌شونده
+# ==========================================
+
+def get_referred_reward():
+
+    return get_int_setting(
+        "referred_reward",
+        REFERRED_REWARD
+    )
+
+
+# ==========================================
 # دریافت تنظیمات Referral
 # ==========================================
 
 def get_referral_settings():
 
     return {
-        "referrer_reward": REFERRER_REWARD,
-        "referred_reward": REFERRED_REWARD
+        "referrer_reward": get_referrer_reward(),
+        "referred_reward": get_referred_reward()
     }
 
 
@@ -58,7 +87,10 @@ def set_referrer_reward(
 
     REFERRER_REWARD = amount
 
-    return True
+    return set_setting(
+        "referrer_reward",
+        amount
+    )
 
 
 # ==========================================
@@ -90,7 +122,10 @@ def set_referred_reward(
 
     REFERRED_REWARD = amount
 
-    return True
+    return set_setting(
+        "referred_reward",
+        amount
+    )
 
 
 # ==========================================
@@ -101,11 +136,14 @@ def validate_rewards():
 
     try:
 
-        if REFERRER_REWARD < 0:
+        referrer_reward = get_referrer_reward()
+        referred_reward = get_referred_reward()
+
+        if referrer_reward < 0:
 
             return False
 
-        if REFERRED_REWARD < 0:
+        if referred_reward < 0:
 
             return False
 
@@ -140,6 +178,13 @@ def create_referral(
     if not validate_rewards():
 
         return False
+
+    # ======================================
+    # دریافت پاداش‌های فعلی
+    # ======================================
+
+    referrer_reward = get_referrer_reward()
+    referred_reward = get_referred_reward()
 
     connection = get_connection()
 
@@ -217,11 +262,11 @@ def create_referral(
     # جایزه دعوت‌کننده
     # ======================================
 
-    if REFERRER_REWARD > 0:
+    if referrer_reward > 0:
 
         add_tokens(
             referrer_id,
-            REFERRER_REWARD,
+            referrer_reward,
             "🎁 پاداش دعوت دوست"
         )
 
@@ -229,11 +274,11 @@ def create_referral(
     # جایزه کاربر جدید
     # ======================================
 
-    if REFERRED_REWARD > 0:
+    if referred_reward > 0:
 
         add_tokens(
             referred_id,
-            REFERRED_REWARD,
+            referred_reward,
             "🎁 پاداش ورود با لینک دعوت"
         )
 
@@ -272,3 +317,220 @@ def get_referral_count(
         return 0
 
     return result[0]
+
+
+# ==========================================
+# دریافت دعوت‌های یک کاربر
+# ==========================================
+
+def get_user_referrals(
+    user_id,
+    limit=100
+):
+
+    try:
+
+        user_id = int(
+            user_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return []
+
+    try:
+
+        limit = int(
+            limit
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        limit = 100
+
+    if limit <= 0:
+
+        limit = 100
+
+    if limit > 500:
+
+        limit = 500
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            r.referred_user_id,
+            u.username,
+            u.first_name,
+            r.created_at
+        FROM referrals r
+        LEFT JOIN users u
+            ON u.user_id = r.referred_user_id
+        WHERE r.referrer_user_id = ?
+        ORDER BY r.created_at DESC
+        LIMIT ?
+        """,
+        (
+            user_id,
+            limit
+        )
+    )
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return rows
+
+
+# ==========================================
+# دریافت معرف یک کاربر
+# ==========================================
+
+def get_referrer(
+    referred_id
+):
+
+    try:
+
+        referred_id = int(
+            referred_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return None
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT referrer_user_id
+        FROM referrals
+        WHERE referred_user_id = ?
+        LIMIT 1
+        """,
+        (
+            referred_id,
+        )
+    )
+
+    result = cursor.fetchone()
+
+    connection.close()
+
+    if result is None:
+
+        return None
+
+    return result[0]
+
+
+# ==========================================
+# بررسی اینکه کاربر قبلاً دعوت شده
+# ==========================================
+
+def has_referrer(
+    user_id
+):
+
+    return get_referrer(
+        user_id
+    ) is not None
+
+
+# ==========================================
+# بررسی اینکه دعوت معتبر است
+# ==========================================
+
+def is_valid_referral(
+    referrer_id,
+    referred_id
+):
+
+    if referrer_id is None:
+        return False
+
+    if referred_id is None:
+        return False
+
+    try:
+
+        referrer_id = int(
+            referrer_id
+        )
+
+        referred_id = int(
+            referred_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+    if referrer_id == referred_id:
+
+        return False
+
+    if has_referrer(
+        referred_id
+    ):
+
+        return False
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT user_id
+        FROM users
+        WHERE user_id = ?
+        LIMIT 1
+        """,
+        (
+            referrer_id,
+        )
+    )
+
+    result = cursor.fetchone()
+
+    connection.close()
+
+    return result is not None
+
+
+# ==========================================
+# دریافت مجموع پاداش یک دعوت‌کننده
+# ==========================================
+
+def get_referral_earnings(
+    user_id
+):
+
+    count = get_referral_count(
+        user_id
+    )
+
+    reward = get_referrer_reward()
+
+    return count * reward
