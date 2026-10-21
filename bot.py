@@ -290,9 +290,9 @@ def handle_message(message):
 
     if text.startswith("/start"):
 
+        # ==================================
         # بررسی جوین اجباری
-        # منطق مربوط به مدیریت تنظیمات
-        # در admin.py قرار دارد.
+        # ==================================
 
         if not admin.is_admin(
             user_id
@@ -314,9 +314,9 @@ def handle_message(message):
             maxsplit=1
         )
 
-        # ------------------------------
+        # ==================================
         # بررسی لینک دعوت
-        # ------------------------------
+        # ==================================
 
         if len(parts) == 2:
 
@@ -341,9 +341,9 @@ def handle_message(message):
 
                     pass
 
-        # ------------------------------
+        # ==================================
         # نمایش منو
-        # ------------------------------
+        # ==================================
 
         send_message(
             chat_id,
@@ -507,12 +507,14 @@ def handle_callback(callback):
 
     if data == "games":
 
+        spin_cost = games.get_spin_cost()
+
         text = (
             "🎮 <b>بازی‌ها</b>\n\n"
             "🎡 <b>چرخونه</b>\n"
 
             f"هر چرخش: "
-            f"<b>{games.SPIN_COST}</b> ژتون\n\n"
+            f"<b>{spin_cost}</b> ژتون\n\n"
 
             "👇 بازی موردنظرت رو انتخاب کن:"
         )
@@ -537,11 +539,13 @@ def handle_callback(callback):
             user_id
         )
 
+        spin_cost = games.get_spin_cost()
+
         text = (
             "🎡 <b>چرخونه شانس</b>\n\n"
 
             f"🪙 هزینه هر چرخش: "
-            f"<b>{games.SPIN_COST}</b> ژتون\n\n"
+            f"<b>{spin_cost}</b> ژتون\n\n"
 
             f"💰 موجودی شما: "
             f"<b>{balance}</b> ژتون\n\n"
@@ -710,6 +714,8 @@ def handle_callback(callback):
             tokens
         )
 
+        token_value = admin.get_token_value()
+
         text = (
             "🪙 <b>کیف پول شما</b>\n\n"
 
@@ -720,7 +726,7 @@ def handle_callback(callback):
             f"<b>{value:,}</b>\n\n"
 
             f"📌 ارزش هر ژتون: "
-            f"<b>{config.TOKEN_VALUE:,}</b> تومان"
+            f"<b>{token_value:,}</b> تومان"
         )
 
         edit_message_text(
@@ -958,4 +964,4 @@ def run():
 
             time.sleep(
                 2
-    )
+                    )
