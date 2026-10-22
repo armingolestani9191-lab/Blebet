@@ -8,9 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import api
 import config
-import games
-import referral
 import wallet
+import referral
 
 from api import (
     send_message,
@@ -19,22 +18,22 @@ from api import (
 )
 
 from database import (
+    get_connection,
     get_setting,
     get_int_setting,
     get_bool_setting,
     set_setting,
-    get_admin_stats,
-    get_recent_users,
-    get_banned_users,
-    find_user,
+    get_user_count,
+    get_banned_user_count,
+    get_active_user_count,
+    get_total_tokens,
+    get_referral_count,
     get_user_admin_info,
+    find_user,
     ban_user,
     unban_user,
-    get_force_join_channels,
-    add_force_join_channel,
-    remove_force_join_channel_by_id,
-    is_force_join_enabled,
-    set_force_join_enabled
+    get_user_tokens,
+    change_user_tokens
 )
 
 
@@ -68,7 +67,7 @@ def is_admin(user_id):
 
 
 # ==========================================
-# تنظیمات عمومی پنل
+# تنظیمات عمومی
 # ==========================================
 
 def get_token_value():
@@ -83,9 +82,7 @@ def get_token_value():
     )
 
 
-def set_token_value(
-    value
-):
+def set_token_value(value):
 
     try:
 
@@ -109,7 +106,445 @@ def set_token_value(
 
 
 # ==========================================
-# کیبورد پنل اصلی
+# State
+# ==========================================
+
+def set_state(
+    admin_user_id,
+    state,
+    **data
+):
+
+    try:
+
+        admin_user_id = int(
+            admin_user_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+    admin_states[
+        admin_user_id
+    ] = {
+        "state": state,
+        **data
+    }
+
+    return True
+
+
+def get_state(
+    admin_user_id
+):
+
+    try:
+
+        admin_user_id = int(
+            admin_user_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return None
+
+    return admin_states.get(
+        admin_user_id
+    )
+
+
+def clear_state(
+    admin_user_id
+):
+
+    try:
+
+        admin_user_id = int(
+            admin_user_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return
+
+    admin_states.pop(
+        admin_user_id,
+        None
+    )
+
+
+def is_cancel(text):
+
+    if text is None:
+
+        return False
+
+    return str(
+        text
+    ).strip().lower() in (
+        "لغو",
+        "/cancel",
+        "cancel"
+    )
+
+
+# ==========================================
+# توابع جوین اجباری
+# ==========================================
+
+def get_force_join_channels():
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            id,
+            channel
+        FROM force_join_channels
+        ORDER BY id ASC
+    """)
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return [
+        {
+            "id": row[0],
+            "channel": row[1]
+        }
+        for row in rows
+    ]
+
+
+def add_force_join_channel(
+    channel
+):
+
+    if channel is None:
+
+        return False
+
+    channel = str(
+        channel
+    ).strip()
+
+    if not channel:
+
+        return False
+
+    if channel.startswith(
+        "https://t.me/"
+    ):
+
+        channel = "@" + channel[
+            len("https://t.me/"):
+        ]
+
+    if not channel.startswith("@"):
+
+        channel = "@" + channel
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    try:
+
+        cursor.execute("""
+            INSERT INTO force_join_channels (
+                channel
+            )
+            VALUES (?)
+        """, (
+            channel,
+        ))
+
+        connection.commit()
+
+        return True
+
+    except Exception:
+
+        connection.rollback()
+
+        return False
+
+    finally:
+
+        connection.close()
+
+
+def remove_force_join_channel_by_id(
+    channel_id
+):
+
+    try:
+
+        channel_id = int(
+            channel_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        DELETE FROM force_join_channels
+        WHERE id = ?
+    """, (
+        channel_id,
+    ))
+
+    changed = (
+        cursor.rowcount > 0
+    )
+
+    if changed:
+
+        connection.commit()
+
+    else:
+
+        connection.rollback()
+
+    connection.close()
+
+    return changed
+
+
+def is_force_join_enabled():
+
+    return get_bool_setting(
+        "force_join_enabled",
+        False
+    )
+
+
+def set_force_join_enabled(
+    enabled
+):
+
+    return set_setting(
+        "force_join_enabled",
+        "1" if enabled else "0"
+    )
+
+
+# ==========================================
+# بررسی عضویت اجباری
+# ==========================================
+
+def check_force_join(
+    user_id
+):
+
+    if is_admin(
+        user_id
+    ):
+
+        return True
+
+    if not is_force_join_enabled():
+
+        return True
+
+    channels = get_force_join_channels()
+
+    if not channels:
+
+        return True
+
+    for item in channels:
+
+        channel = item.get(
+            "channel"
+        )
+
+        if not channel:
+
+            continue
+
+        try:
+
+            result = api.api_request(
+                "getChatMember",
+                {
+                    "chat_id": channel,
+                    "user_id": int(user_id)
+                }
+            )
+
+        except Exception:
+
+            return False
+
+        if not isinstance(
+            result,
+            dict
+        ):
+
+            return False
+
+        if not result.get(
+            "ok",
+            False
+        ):
+
+            return False
+
+        member = result.get(
+            "result"
+        )
+
+        if not isinstance(
+            member,
+            dict
+        ):
+
+            return False
+
+        status = member.get(
+            "status"
+        )
+
+        if status in (
+            "creator",
+            "administrator",
+            "member"
+        ):
+
+            continue
+
+        if status == "restricted":
+
+            if member.get(
+                "is_member",
+                False
+            ):
+
+                continue
+
+        return False
+
+    return True
+
+
+# ==========================================
+# متن جوین اجباری
+# ==========================================
+
+def force_join_user_text():
+
+    channels = get_force_join_channels()
+
+    text = (
+        "📢 <b>عضویت در کانال‌ها</b>\n\n"
+        "برای استفاده از ربات، ابتدا باید "
+        "در کانال‌های زیر عضو بشی:\n\n"
+    )
+
+    if not channels:
+
+        text += (
+            "📭 در حال حاضر کانالی "
+            "برای عضویت تنظیم نشده."
+        )
+
+        return text
+
+    for index, item in enumerate(
+        channels,
+        start=1
+    ):
+
+        channel = item.get(
+            "channel",
+            ""
+        )
+
+        text += (
+            f"{index}. "
+            f"<code>{channel}</code>\n"
+        )
+
+    text += (
+        "\nبعد از عضویت روی دکمه "
+        "«✅ بررسی عضویت» بزن."
+    )
+
+    return text
+
+
+def force_join_user_keyboard():
+
+    channels = get_force_join_channels()
+
+    buttons = []
+
+    for item in channels:
+
+        channel = str(
+            item.get(
+                "channel",
+                ""
+            )
+        ).strip()
+
+        if not channel:
+
+            continue
+
+        clean = channel.lstrip(
+            "@"
+        )
+
+        buttons.append([
+            {
+                "text": (
+                    f"📢 عضویت "
+                    f"{channel}"
+                ),
+                "url": (
+                    "https://t.me/" +
+                    clean
+                )
+            }
+        ])
+
+    buttons.append([
+        {
+            "text": "✅ بررسی عضویت",
+            "callback_data": "check_join"
+        }
+    ])
+
+    return json.dumps({
+        "inline_keyboard": buttons
+    })
+
+
+# ==========================================
+# پنل اصلی
 # ==========================================
 
 def admin_keyboard():
@@ -130,7 +565,7 @@ def admin_keyboard():
 
             [
                 {
-                    "text": "🪙 قیمت ژتون",
+                    "text": "🪙 تنظیم ژتون",
                     "callback_data": "admin_token"
                 }
             ],
@@ -143,13 +578,6 @@ def admin_keyboard():
                 {
                     "text": "🎁 جایزه دعوت‌شونده",
                     "callback_data": "admin_referred"
-                }
-            ],
-
-            [
-                {
-                    "text": "🎡 تنظیمات چرخونه",
-                    "callback_data": "admin_spin"
                 }
             ],
 
@@ -173,99 +601,83 @@ def admin_keyboard():
                     "callback_data": "home"
                 }
             ]
-
         ]
     })
 
-
-# ==========================================
-# کیبورد بازگشت به پنل
-# ==========================================
 
 def admin_back_keyboard():
 
     return json.dumps({
         "inline_keyboard": [
-
             [
                 {
                     "text": "‹ بازگشت به پنل",
                     "callback_data": "admin_panel"
                 }
             ]
-
         ]
     })
 
 
 # ==========================================
-# متن پنل اصلی
+# متن پنل
 # ==========================================
 
 def admin_panel_text():
 
-    stats = get_admin_stats()
-
-    force_join = is_force_join_enabled()
+    stats = {
+        "users": get_user_count(),
+        "banned_users": get_banned_user_count(),
+        "active_users": get_active_user_count(),
+        "tokens": get_total_tokens(),
+        "referrals": get_referral_count()
+    }
 
     force_status = (
         "🟢 روشن"
-        if force_join
+        if is_force_join_enabled()
         else
         "🔴 خاموش"
     )
 
     return (
         "👑 <b>پنل مدیریت BaleBet</b>\n\n"
-
         "📊 <b>وضعیت ربات</b>\n"
-        f"👥 کاربران: <b>{stats['users']:,}</b>\n"
-        f"🟢 فعال: <b>{stats['active_users']:,}</b>\n"
-        f"🚫 بن‌شده: <b>{stats['banned_users']:,}</b>\n"
+        f"👥 کاربران: "
+        f"<b>{stats['users']:,}</b>\n"
+        f"🟢 فعال: "
+        f"<b>{stats['active_users']:,}</b>\n"
+        f"🚫 بن‌شده: "
+        f"<b>{stats['banned_users']:,}</b>\n"
         f"🪙 مجموع ژتون‌ها: "
         f"<b>{stats['tokens']:,}</b>\n"
         f"👥 دعوت‌ها: "
         f"<b>{stats['referrals']:,}</b>\n\n"
-
-        f"📢 جوین اجباری: <b>{force_status}</b>\n\n"
-
+        f"📢 جوین اجباری: "
+        f"<b>{force_status}</b>\n\n"
         "👇 یک بخش را انتخاب کن:"
     )
 
 
-# ==========================================
-# متن آمار
-# ==========================================
-
 def admin_stats_text():
-
-    stats = get_admin_stats()
 
     return (
         "📊 <b>آمار ربات</b>\n\n"
-
         f"👥 کل کاربران:\n"
-        f"<b>{stats['users']:,}</b>\n\n"
-
+        f"<b>{get_user_count():,}</b>\n\n"
         f"🟢 کاربران فعال:\n"
-        f"<b>{stats['active_users']:,}</b>\n\n"
-
+        f"<b>{get_active_user_count():,}</b>\n\n"
         f"🚫 کاربران بن‌شده:\n"
-        f"<b>{stats['banned_users']:,}</b>\n\n"
-
-        f"🪙 مجموع ژتون کاربران:\n"
-        f"<b>{stats['tokens']:,}</b>\n\n"
-
+        f"<b>{get_banned_user_count():,}</b>\n\n"
+        f"🪙 مجموع ژتون‌ها:\n"
+        f"<b>{get_total_tokens():,}</b>\n\n"
         f"👥 دعوت‌های موفق:\n"
-        f"<b>{stats['referrals']:,}</b>\n\n"
-
-        f"💳 تعداد تراکنش‌ها:\n"
-        f"<b>{stats['transactions']:,}</b>"
+        f"<b>{get_referral_count():,}</b>"
     )
 
 
 # ==========================================
-# کیبورد مدیریت کاربران
+# مدیریت کاربران
 # ==========================================
 
 def admin_users_keyboard():
@@ -282,13 +694,6 @@ def admin_users_keyboard():
 
             [
                 {
-                    "text": "👥 آخرین کاربران",
-                    "callback_data": "admin_recent_users"
-                }
-            ],
-
-            [
-                {
                     "text": "🚫 کاربران بن‌شده",
                     "callback_data": "admin_banned_users"
                 }
@@ -300,37 +705,25 @@ def admin_users_keyboard():
                     "callback_data": "admin_panel"
                 }
             ]
-
         ]
     })
 
-
-# ==========================================
-# متن مدیریت کاربران
-# ==========================================
 
 def admin_users_text():
 
     return (
         "👤 <b>مدیریت کاربران</b>\n\n"
-
-        "🔍 می‌تونی کاربر رو با یکی از این‌ها پیدا کنی:\n\n"
-
+        "🔍 کاربر را با یکی از موارد زیر پیدا کن:\n\n"
         "🆔 آیدی عددی\n"
-        "مثال:\n"
         "<code>595450272</code>\n\n"
-
         "👤 یوزرنیم\n"
-        "مثال:\n"
         "<code>@username</code>"
     )
 
 
-# ==========================================
-# نمایش اطلاعات کاربر
-# ==========================================
-
-def user_info_text(user):
+def user_info_text(
+    user
+):
 
     username = user.get(
         "username"
@@ -338,13 +731,14 @@ def user_info_text(user):
 
     if username:
 
-        username_text = (
-            f"@{str(username).lstrip('@')}"
+        username = (
+            "@" +
+            str(username).lstrip("@")
         )
 
     else:
 
-        username_text = "ندارد"
+        username = "ندارد"
 
     status = (
         "🚫 بن‌شده"
@@ -355,36 +749,28 @@ def user_info_text(user):
 
     return (
         "👤 <b>اطلاعات کاربر</b>\n\n"
-
         f"🆔 آیدی:\n"
         f"<code>{user['user_id']}</code>\n\n"
-
         f"👤 یوزرنیم:\n"
-        f"<code>{username_text}</code>\n\n"
-
+        f"<code>{username}</code>\n\n"
         f"📝 نام:\n"
         f"<b>{user.get('first_name') or 'ندارد'}</b>\n\n"
-
         f"🪙 موجودی:\n"
-        f"<b>{user.get('tokens', 0):,}</b> ژتون\n\n"
-
+        f"<b>{int(user.get('tokens', 0)):,}</b> ژتون\n\n"
         f"📌 وضعیت:\n"
         f"<b>{status}</b>\n\n"
-
         f"📅 ثبت‌نام:\n"
         f"<code>{user.get('created_at') or 'نامشخص'}</code>"
     )
 
 
-# ==========================================
-# کیبورد مدیریت یک کاربر
-# ==========================================
-
 def admin_user_keyboard(
     user
 ):
 
-    user_id = user["user_id"]
+    user_id = int(
+        user["user_id"]
+    )
 
     if user.get("banned"):
 
@@ -441,79 +827,54 @@ def admin_user_keyboard(
                     "callback_data": "admin_users"
                 }
             ]
-
         ]
     })
 
 
 # ==========================================
-# آخرین کاربران
+# بن‌شده‌ها
 # ==========================================
 
-def recent_users_text():
+def get_banned_users():
 
-    users = get_recent_users(
-        15
-    )
+    connection = get_connection()
 
-    if not users:
+    cursor = connection.cursor()
 
-        return (
-            "👥 <b>آخرین کاربران</b>\n\n"
-            "هیچ کاربری پیدا نشد."
-        )
+    cursor.execute("""
+        SELECT
+            user_id,
+            username,
+            first_name,
+            tokens,
+            banned,
+            created_at
+        FROM users
+        WHERE banned = 1
+        ORDER BY user_id DESC
+        LIMIT 30
+    """)
 
-    text = (
-        "👥 <b>آخرین کاربران</b>\n\n"
-    )
+    rows = cursor.fetchall()
 
-    for index, user in enumerate(
-        users,
-        start=1
-    ):
+    connection.close()
 
-        username = user.get(
-            "username"
-        )
+    return [
+        {
+            "user_id": row[0],
+            "username": row[1],
+            "first_name": row[2],
+            "tokens": row[3],
+            "banned": bool(row[4]),
+            "created_at": row[5]
+        }
+        for row in rows
+    ]
 
-        if username:
-
-            username = (
-                "@" +
-                str(username).lstrip("@")
-            )
-
-        else:
-
-            username = "بدون یوزرنیم"
-
-        status = (
-            "🚫"
-            if user.get("banned")
-            else
-            "🟢"
-        )
-
-        text += (
-            f"{index}. {status} "
-            f"<b>{user.get('first_name') or 'بدون نام'}</b>\n"
-            f"🆔 <code>{user['user_id']}</code>\n"
-            f"👤 {username}\n"
-            f"🪙 {user.get('tokens', 0):,}\n\n"
-        )
-
-    return text
-
-
-# ==========================================
-# کاربران بن‌شده
-# ==========================================
 
 def banned_users_text():
 
-    users = get_banned_users(
-        15
-    )
+    users = get_banned_users()
 
     if not users:
 
@@ -551,273 +912,14 @@ def banned_users_text():
             f"<b>{user.get('first_name') or 'بدون نام'}</b>\n"
             f"🆔 <code>{user['user_id']}</code>\n"
             f"👤 {username}\n"
-            f"🪙 {user.get('tokens', 0):,}\n\n"
+            f"🪙 {int(user.get('tokens', 0)):,}\n\n"
         )
 
     return text
 
 
 # ==========================================
-# کیبورد تنظیمات دعوت
-# ==========================================
-
-def admin_referral_keyboard():
-
-    return json.dumps({
-        "inline_keyboard": [
-
-            [
-                {
-                    "text": "🎁 جایزه دعوت‌کننده",
-                    "callback_data": (
-                        "admin_referrer"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "🎁 جایزه دعوت‌شونده",
-                    "callback_data": (
-                        "admin_referred"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "‹ بازگشت",
-                    "callback_data": "admin_panel"
-                }
-            ]
-
-        ]
-    })
-
-
-# ==========================================
-# متن تنظیمات دعوت
-# ==========================================
-
-def referral_settings_text():
-
-    return (
-        "🎁 <b>تنظیمات دعوت</b>\n\n"
-
-        f"👤 پاداش دعوت‌کننده:\n"
-        f"<b>{referral.get_referrer_reward():,}</b> ژتون\n\n"
-
-        f"🎁 پاداش دعوت‌شونده:\n"
-        f"<b>{referral.get_referred_reward():,}</b> ژتون\n\n"
-
-        "👇 موردی که می‌خوای تغییر بدی رو انتخاب کن:"
-    )
-
-
-# ==========================================
-# کیبورد چرخونه
-# ==========================================
-
-def admin_spin_keyboard():
-
-    return json.dumps({
-        "inline_keyboard": [
-
-            [
-                {
-                    "text": "💰 تغییر هزینه چرخش",
-                    "callback_data": (
-                        "admin_spin_cost"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "🎁 مدیریت جوایز",
-                    "callback_data": (
-                        "admin_spin_rewards"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "🔄 بازنشانی پیش‌فرض",
-                    "callback_data": (
-                        "admin_spin_reset"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "‹ بازگشت",
-                    "callback_data": "admin_panel"
-                }
-            ]
-
-        ]
-    })
-
-
-# ==========================================
-# متن تنظیمات چرخونه
-# ==========================================
-
-def spin_settings_text():
-
-    settings = games.get_spin_settings()
-
-    text = (
-        "🎡 <b>تنظیمات چرخونه</b>\n\n"
-
-        f"💰 هزینه هر چرخش:\n"
-        f"<b>{settings['cost']:,}</b> ژتون\n\n"
-
-        "🎁 <b>جوایز فعلی:</b>\n\n"
-    )
-
-    for index, item in enumerate(
-        settings["rewards"],
-        start=1
-    ):
-
-        text += (
-            f"{index}. {item['name']}\n"
-            f"🪙 جایزه: "
-            f"<b>{int(item['reward']):,}</b>\n"
-            f"🎯 احتمال: "
-            f"<b>{item['chance']}%</b>\n\n"
-        )
-
-    return text
-
-
-# ==========================================
-# کیبورد جوایز چرخونه
-# ==========================================
-
-def spin_rewards_keyboard():
-
-    rewards = games.get_spin_rewards()
-
-    buttons = []
-
-    for index, item in enumerate(
-        rewards
-    ):
-
-        buttons.append([
-            {
-                "text": (
-                    f"✏️ {index + 1}. "
-                    f"{item['name']}"
-                ),
-                "callback_data": (
-                    f"admin_reward_{index}"
-                )
-            }
-        ])
-
-    buttons.append([
-        {
-            "text": "‹ بازگشت",
-            "callback_data": "admin_spin"
-        }
-    ])
-
-    return json.dumps({
-        "inline_keyboard": buttons
-    })
-
-
-# ==========================================
-# متن مدیریت جوایز
-# ==========================================
-
-def spin_rewards_text():
-
-    rewards = games.get_spin_rewards()
-
-    text = (
-        "🎁 <b>مدیریت جوایز چرخونه</b>\n\n"
-        "روی جایزه موردنظر بزن:\n\n"
-    )
-
-    for index, item in enumerate(
-        rewards,
-        start=1
-    ):
-
-        text += (
-            f"{index}. {item['name']} → "
-            f"<b>{int(item['reward']):,}</b> ژتون\n"
-            f"🎯 احتمال: "
-            f"<b>{item['chance']}%</b>\n\n"
-        )
-
-    text += (
-        "⚠️ مجموع احتمال‌ها باید دقیقاً "
-        "<b>100%</b> باشد."
-    )
-
-    return text
-
-
-# ==========================================
-# کیبورد و متن ویرایش جایزه
-# ==========================================
-
-def reward_edit_keyboard(
-    index
-):
-
-    return json.dumps({
-        "inline_keyboard": [
-
-            [
-                {
-                    "text": "📝 تغییر نام",
-                    "callback_data": (
-                        f"admin_reward_name_{index}"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "🪙 تغییر مقدار",
-                    "callback_data": (
-                        f"admin_reward_value_{index}"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "🎯 تغییر احتمال",
-                    "callback_data": (
-                        f"admin_reward_chance_{index}"
-                    )
-                }
-            ],
-
-            [
-                {
-                    "text": "‹ بازگشت",
-                    "callback_data": (
-                        "admin_spin_rewards"
-                    )
-                }
-            ]
-
-        ]
-    })
-
-
-# ==========================================
-# جوین اجباری - کیبورد ادمین
+# جوین اجباری - پنل
 # ==========================================
 
 def force_join_keyboard():
@@ -826,15 +928,23 @@ def force_join_keyboard():
 
     buttons = []
 
-    for index, channel in enumerate(
-        channels
-    ):
+    for item in channels:
+
+        channel_id = item.get(
+            "id"
+        )
+
+        channel = item.get(
+            "channel"
+        )
 
         buttons.append([
             {
-                "text": f"❌ حذف {channel}",
+                "text": (
+                    f"❌ حذف {channel}"
+                ),
                 "callback_data": (
-                    f"admin_force_remove_{index}"
+                    f"admin_force_remove_{channel_id}"
                 )
             }
         ])
@@ -850,7 +960,9 @@ def force_join_keyboard():
 
         [
             {
-                "text": f"🔘 وضعیت: {status}",
+                "text": (
+                    f"🔘 وضعیت: {status}"
+                ),
                 "callback_data": (
                     "admin_force_toggle"
                 )
@@ -869,9 +981,7 @@ def force_join_keyboard():
         [
             {
                 "text": "‹ بازگشت",
-                "callback_data": (
-                    "admin_panel"
-                )
+                "callback_data": "admin_panel"
             }
         ]
 
@@ -881,10 +991,6 @@ def force_join_keyboard():
         "inline_keyboard": buttons
     })
 
-
-# ==========================================
-# متن جوین اجباری - پنل ادمین
-# ==========================================
 
 def force_join_text():
 
@@ -902,212 +1008,29 @@ def force_join_text():
         f"وضعیت: <b>{status}</b>\n\n"
     )
 
-    if channels:
-
-        text += (
-            "📋 <b>کانال‌های فعلی:</b>\n\n"
-        )
-
-        for index, channel in enumerate(
-            channels,
-            start=1
-        ):
-
-            text += (
-                f"{index}. "
-                f"<code>{channel}</code>\n"
-            )
-
-    else:
-
-        text += (
-            "📭 هنوز کانالی اضافه نشده.\n"
-        )
-
-    return text
-
-
-# ==========================================
-# متن جوین اجباری برای کاربر
-# ==========================================
-
-def force_join_user_text():
-
-    channels = get_force_join_channels()
-
-    text = (
-        "📢 <b>عضویت در کانال‌ها</b>\n\n"
-        "برای استفاده از ربات، ابتدا باید "
-        "در کانال‌های زیر عضو بشی:\n\n"
-    )
-
-    if channels:
-
-        for index, channel in enumerate(
-            channels,
-            start=1
-        ):
-
-            text += (
-                f"{index}. "
-                f"<code>{channel}</code>\n"
-            )
-
-    else:
-
-        text += (
-            "📭 در حال حاضر کانالی برای عضویت "
-            "تنظیم نشده.\n"
-        )
-
-    text += (
-        "\nبعد از عضویت روی دکمه "
-        "«✅ بررسی عضویت» بزن."
-    )
-
-    return text
-
-
-# ==========================================
-# کیبورد جوین اجباری برای کاربر
-# ==========================================
-
-def force_join_user_keyboard():
-
-    channels = get_force_join_channels()
-
-    buttons = []
-
-    for channel in channels:
-
-        clean_channel = str(
-            channel
-        ).strip()
-
-        if clean_channel.startswith(
-            "@"
-        ):
-
-            channel_url = (
-                "https://t.me/" +
-                clean_channel[1:]
-            )
-
-        elif clean_channel.startswith(
-            "https://t.me/"
-        ):
-
-            channel_url = clean_channel
-
-        else:
-
-            channel_url = (
-                "https://t.me/" +
-                clean_channel
-            )
-
-        buttons.append([
-            {
-                "text": f"📢 عضویت {clean_channel}",
-                "url": channel_url
-            }
-        ])
-
-    buttons.append([
-        {
-            "text": "✅ بررسی عضویت",
-            "callback_data": "check_join"
-        }
-    ])
-
-    return json.dumps({
-        "inline_keyboard": buttons
-    })
-
-
-# ==========================================
-# بررسی جوین اجباری کاربر
-# ==========================================
-
-def check_force_join(
-    user_id
-):
-
-    # اگر جوین اجباری خاموش باشد
-    # کاربر آزاد است.
-
-    if not is_force_join_enabled():
-
-        return True
-
-    channels = get_force_join_channels()
-
-    # اگر هیچ کانالی تنظیم نشده باشد
-    # نیازی به عضویت نیست.
-
     if not channels:
 
-        return True
-
-    # بررسی عضویت کانال‌ها از طریق API
-    # در این مرحله از api استفاده می‌کنیم.
-
-    for channel in channels:
-
-        channel = str(
-            channel
-        ).strip()
-
-        if not channel:
-
-            continue
-
-        try:
-
-            result = api.api_request(
-                "getChatMember",
-                {
-                    "chat_id": channel,
-                    "user_id": user_id
-                }
-            )
-
-        except Exception:
-
-            # اگر بررسی API خطا داد،
-            # کاربر را عضو فرض نمی‌کنیم.
-
-            return False
-
-        if not result:
-
-            return False
-
-        if not result.get(
-            "ok",
-            False
-        ):
-
-            return False
-
-        member = result.get(
-            "result",
-            {}
+        text += (
+            "📭 هنوز کانالی اضافه نشده."
         )
 
-        status = member.get(
-            "status"
+        return text
+
+    text += (
+        "📋 <b>کانال‌های فعلی:</b>\n\n"
+    )
+
+    for index, item in enumerate(
+        channels,
+        start=1
+    ):
+
+        text += (
+            f"{index}. "
+            f"<code>{item['channel']}</code>\n"
         )
 
-        if status not in (
-            "creator",
-            "administrator",
-            "member"
-        ):
-
-            return False
-
-    return True
+    return text
 
 
 # ==========================================
@@ -1121,7 +1044,7 @@ def broadcast_keyboard():
 
             [
                 {
-                    "text": "📣 همگانی متنی",
+                    "text": "📝 ارسال متنی",
                     "callback_data": (
                         "admin_broadcast_text"
                     )
@@ -1130,7 +1053,7 @@ def broadcast_keyboard():
 
             [
                 {
-                    "text": "↪️ Forward",
+                    "text": "↪️ ارسال Forward",
                     "callback_data": (
                         "admin_broadcast_forward"
                     )
@@ -1140,44 +1063,44 @@ def broadcast_keyboard():
             [
                 {
                     "text": "‹ بازگشت",
-                    "callback_data": (
-                        "admin_panel"
-                    )
+                    "callback_data": "admin_panel"
                 }
             ]
-
         ]
     })
 
 
-# ==========================================
-# متن همگانی
-# ==========================================
-
 def broadcast_text():
 
     return (
-        "📣 <b>ارسال همگانی</b>\n\n"
-
-        "از این بخش می‌تونی یک پیام رو برای "
-        "تمام کاربران ارسال کنی.\n\n"
-
-        "📣 <b>همگانی متنی</b>\n"
-        "متن پیام رو ازت می‌گیره.\n\n"
-
-        "↪️ <b>Forward</b>\n"
-        "پیام رو Forward می‌کنی و همون پیام "
-        "برای کاربران ارسال می‌شه.\n\n"
-
-        "⚡ ارسال‌ها به صورت سریع و همزمان انجام می‌شن.\n\n"
-
-        "📊 بعد از پایان، گزارش کامل ارسال می‌شه."
+        "📣 <b>همگانی</b>\n\n"
+        "از یکی از گزینه‌های زیر استفاده کن:"
     )
 
 
-# ==========================================
-# پیام وضعیت Broadcast
-# ==========================================
+def get_broadcast_users():
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT user_id
+        FROM users
+        WHERE user_id IS NOT NULL
+        AND banned = 0
+        ORDER BY user_id ASC
+    """)
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return [
+        row[0]
+        for row in rows
+    ]
+
 
 def broadcast_report(
     total,
@@ -1187,60 +1110,37 @@ def broadcast_report(
 
     return (
         "📊 <b>گزارش همگانی</b>\n\n"
-
-        f"👥 تعداد کل:\n"
-        f"<b>{total:,}</b>\n\n"
-
-        f"✅ موفق:\n"
-        f"<b>{sent:,}</b>\n\n"
-
-        f"❌ ناموفق:\n"
-        f"<b>{failed:,}</b>\n\n"
-
-        f"📈 درصد موفقیت:\n"
-        f"<b>{(
-            (sent / total * 100)
-            if total
-            else 0
-        ):.1f}%</b>"
+        f"👥 کل: <b>{total:,}</b>\n"
+        f"✅ ارسال‌شده: <b>{sent:,}</b>\n"
+        f"❌ ناموفق: <b>{failed:,}</b>"
     )
 
 
-# ==========================================
-# استخراج پیام برای Forward
-# ==========================================
-
-def get_message_id(
-    message
+def send_text_to_user(
+    user_id,
+    text
 ):
 
-    if not isinstance(
-        message,
-        dict
-    ):
+    try:
 
-        return None
+        result = send_message(
+            user_id,
+            text
+        )
 
-    return message.get(
-        "message_id"
-    )
+        return bool(
+            result
+        )
 
+    except Exception:
 
-# ==========================================
-# ارسال همگانی متنی
-# ==========================================
+        return False
+
 
 def broadcast_text_message(
     text,
     users
 ):
-
-    if not users:
-
-        return (
-            0,
-            0
-        )
 
     sent = 0
     failed = 0
@@ -1262,67 +1162,22 @@ def broadcast_text_message(
 
         workers = 20
 
-    if workers <= 0:
-
-        workers = 1
-
-    if workers > 50:
-
-        workers = 50
-
-    delay = getattr(
-        config,
-        "BROADCAST_DELAY",
-        0
+    workers = max(
+        1,
+        min(
+            workers,
+            50
+        )
     )
 
-    try:
-
-        delay = float(
-            delay
-        )
-
-    except (
-        TypeError,
-        ValueError
-    ):
-
-        delay = 0
-
     def send_one(
-        user
+        user_id
     ):
 
-        user_id = user.get(
-            "user_id"
-        )
-
-        if not user_id:
-
-            return False
-
-        result = send_message(
+        return send_text_to_user(
             user_id,
             text
         )
-
-        if not result:
-
-            return False
-
-        if isinstance(
-            result,
-            dict
-        ):
-
-            return bool(
-                result.get(
-                    "ok",
-                    False
-                )
-            )
-
-        return True
 
     with ThreadPoolExecutor(
         max_workers=workers
@@ -1343,65 +1198,47 @@ def broadcast_text_message(
 
                 failed += 1
 
-            if delay > 0:
-
-                threading.Event().wait(
-                    delay
-                )
-
     return (
         sent,
         failed
     )
 
 
-# ==========================================
-# ارسال Forward
-# ==========================================
-
 def forward_message_to_user(
     source_chat_id,
     message_id,
-    user_id
+    target_user_id
 ):
 
-    result = api.api_request(
-        "forwardMessage",
-        {
-            "chat_id": user_id,
-            "from_chat_id": source_chat_id,
-            "message_id": message_id
-        }
-    )
+    try:
 
-    if not result:
+        result = api.api_request(
+            "forwardMessage",
+            {
+                "chat_id": target_user_id,
+                "from_chat_id": source_chat_id,
+                "message_id": message_id
+            }
+        )
+
+        return bool(
+            result
+            and result.get(
+                "ok",
+                False
+            )
+        )
+
+    except Exception:
 
         return False
 
-    return bool(
-        result.get(
-            "ok",
-            False
-        )
-    )
-
-
-# ==========================================
-# ارسال Forward همگانی
-# ==========================================
 
 def broadcast_forward_message(
     source_chat_id,
     message_id,
     users
 ):
-
-    if not users:
-
-        return (
-            0,
-            0
-        )
 
     sent = 0
     failed = 0
@@ -1423,25 +1260,17 @@ def broadcast_forward_message(
 
         workers = 20
 
-    if workers <= 0:
-
-        workers = 1
-
-    if workers > 50:
-
-        workers = 50
+    workers = max(
+        1,
+        min(
+            workers,
+            50
+        )
+    )
 
     def send_one(
-        user
+        user_id
     ):
-
-        user_id = user.get(
-            "user_id"
-        )
-
-        if not user_id:
-
-            return False
 
         return forward_message_to_user(
             source_chat_id,
@@ -1475,7 +1304,7 @@ def broadcast_forward_message(
 
 
 # ==========================================
-# شروع Broadcast متنی
+# شروع همگانی متنی
 # ==========================================
 
 def start_text_broadcast(
@@ -1487,7 +1316,7 @@ def start_text_broadcast(
 
         send_message(
             chat_id,
-            "❌ متن پیام خالیه."
+            "❌ متن خالیه."
         )
 
         return
@@ -1498,17 +1327,14 @@ def start_text_broadcast(
 
         send_message(
             chat_id,
-            "⏳ یک ارسال همگانی در حال انجامه.\n"
-            "لطفاً صبر کن تا تمام بشه."
+            "⏳ یک همگانی در حال انجامه."
         )
 
         return
 
     try:
 
-        from database import get_all_users
-
-        users = get_all_users()
+        users = get_broadcast_users()
 
         total = len(
             users
@@ -1518,7 +1344,7 @@ def start_text_broadcast(
 
             send_message(
                 chat_id,
-                "📭 هیچ کاربری برای ارسال وجود نداره."
+                "📭 کاربری برای ارسال وجود نداره."
             )
 
             return
@@ -1526,16 +1352,14 @@ def start_text_broadcast(
         send_message(
             chat_id,
             (
-                "⚡ <b>ارسال سریع شروع شد.</b>\n\n"
-                f"👥 تعداد کاربران: <b>{total:,}</b>"
+                "⚡ <b>ارسال شروع شد.</b>\n\n"
+                f"👥 کاربران: <b>{total:,}</b>"
             )
         )
 
-        sent, failed = (
-            broadcast_text_message(
-                text,
-                users
-            )
+        sent, failed = broadcast_text_message(
+            text,
+            users
         )
 
         send_message(
@@ -1554,7 +1378,7 @@ def start_text_broadcast(
 
 
 # ==========================================
-# شروع Broadcast Forward
+# شروع Forward
 # ==========================================
 
 def start_forward_broadcast(
@@ -1567,7 +1391,7 @@ def start_forward_broadcast(
 
         send_message(
             chat_id,
-            "❌ اطلاعات پیام برای Forward کامل نیست."
+            "❌ اطلاعات Forward کامل نیست."
         )
 
         return
@@ -1578,17 +1402,14 @@ def start_forward_broadcast(
 
         send_message(
             chat_id,
-            "⏳ یک ارسال همگانی در حال انجامه.\n"
-            "لطفاً صبر کن."
+            "⏳ یک همگانی در حال انجامه."
         )
 
         return
 
     try:
 
-        from database import get_all_users
-
-        users = get_all_users()
+        users = get_broadcast_users()
 
         total = len(
             users
@@ -1598,7 +1419,7 @@ def start_forward_broadcast(
 
             send_message(
                 chat_id,
-                "📭 هیچ کاربری برای ارسال وجود نداره."
+                "📭 کاربری برای ارسال وجود نداره."
             )
 
             return
@@ -1606,17 +1427,15 @@ def start_forward_broadcast(
         send_message(
             chat_id,
             (
-                "⚡ <b>ارسال Forward شروع شد.</b>\n\n"
-                f"👥 تعداد کاربران: <b>{total:,}</b>"
+                "⚡ <b>Forward شروع شد.</b>\n\n"
+                f"👥 کاربران: <b>{total:,}</b>"
             )
         )
 
-        sent, failed = (
-            broadcast_forward_message(
-                source_chat_id,
-                message_id,
-                users
-            )
+        sent, failed = broadcast_forward_message(
+            source_chat_id,
+            message_id,
+            users
         )
 
         send_message(
@@ -1635,73 +1454,7 @@ def start_forward_broadcast(
 
 
 # ==========================================
-# ذخیره State
-# ==========================================
-
-def set_state(
-    user_id,
-    state,
-    **data
-):
-
-    admin_states[
-        int(user_id)
-    ] = {
-        "state": state,
-        **data
-    }
-
-
-# ==========================================
-# دریافت State
-# ==========================================
-
-def get_state(
-    user_id
-):
-
-    return admin_states.get(
-        int(user_id)
-    )
-
-
-# ==========================================
-# حذف State
-# ==========================================
-
-def clear_state(
-    user_id
-):
-
-    admin_states.pop(
-        int(user_id),
-        None
-    )
-
-
-# ==========================================
-# بررسی لغو
-# ==========================================
-
-def is_cancel(
-    text
-):
-
-    if text is None:
-
-        return False
-
-    return str(
-        text
-    ).strip().lower() in (
-        "لغو",
-        "/cancel",
-        "cancel"
-    )
-
-
-# ==========================================
-# پردازش پیام‌های پنل
+# پردازش پیام‌های ادمین
 # ==========================================
 
 def handle_message(
@@ -1718,7 +1471,7 @@ def handle_message(
         {}
     )
 
-    user_id = user.get(
+    admin_user_id = user.get(
         "id"
     )
 
@@ -1726,12 +1479,12 @@ def handle_message(
         "id"
     )
 
-    if not user_id or not chat_id:
+    if not admin_user_id or not chat_id:
 
         return False
 
     if not is_admin(
-        user_id
+        admin_user_id
     ):
 
         return False
@@ -1748,7 +1501,7 @@ def handle_message(
     if text == "/admin":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         send_message(
@@ -1759,12 +1512,8 @@ def handle_message(
 
         return True
 
-    # ======================================
-    # اگر State نداریم
-    # ======================================
-
     state_data = get_state(
-        user_id
+        admin_user_id
     )
 
     if not state_data:
@@ -1784,7 +1533,7 @@ def handle_message(
     ):
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         send_message(
@@ -1801,22 +1550,19 @@ def handle_message(
 
     if state == "user_search":
 
-        user = find_user(
+        target = find_user(
             text
         )
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
-        if not user:
+        if not target:
 
             send_message(
                 chat_id,
-                (
-                    "❌ کاربر پیدا نشد.\n\n"
-                    "با ID عددی یا Username دوباره امتحان کن."
-                ),
+                "❌ کاربر پیدا نشد.",
                 admin_users_keyboard()
             )
 
@@ -1825,29 +1571,29 @@ def handle_message(
         send_message(
             chat_id,
             user_info_text(
-                user
+                target
             ),
             admin_user_keyboard(
-                user
+                target
             )
         )
 
         return True
 
     # ======================================
-    # افزایش موجودی
+    # افزایش ژتون
     # ======================================
 
     if state == "user_add_tokens":
 
         target_id = state_data.get(
-            "user_id"
+            "target_user_id"
         )
 
         try:
 
             amount = int(
-                text.strip()
+                str(text).strip()
             )
 
         except (
@@ -1857,83 +1603,7 @@ def handle_message(
 
             send_message(
                 chat_id,
-                "❌ فقط عدد مثبت وارد کن."
-            )
-
-            return True
-
-        if amount <= 0:
-
-            send_message(
-                chat_id,
-                "❌ مقدار باید بیشتر از صفر باشه."
-            )
-
-            return True
-
-        success = wallet.admin_add_tokens(
-            target_id,
-            amount
-        )
-
-        clear_state(
-            user_id
-        )
-
-        target = get_user_admin_info(
-            target_id
-        )
-
-        if success and target:
-
-            send_message(
-                chat_id,
-                (
-                    "✅ موجودی با موفقیت افزایش پیدا کرد.\n\n"
-                    f"🪙 مقدار افزایش: "
-                    f"<b>{amount:,}</b>\n"
-                    f"🪙 موجودی جدید: "
-                    f"<b>{target['tokens']:,}</b>"
-                ),
-                admin_user_keyboard(
-                    target
-                )
-            )
-
-        else:
-
-            send_message(
-                chat_id,
-                "❌ افزایش موجودی انجام نشد.",
-                admin_users_keyboard()
-            )
-
-        return True
-
-    # ======================================
-    # کاهش موجودی
-    # ======================================
-
-    if state == "user_remove_tokens":
-
-        target_id = state_data.get(
-            "user_id"
-        )
-
-        try:
-
-            amount = int(
-                text.strip()
-            )
-
-        except (
-            TypeError,
-            ValueError
-        ):
-
-            send_message(
-                chat_id,
-                "❌ فقط عدد مثبت وارد کن."
+                "❌ فقط عدد وارد کن."
             )
 
             return True
@@ -1954,7 +1624,7 @@ def handle_message(
         if not target:
 
             clear_state(
-                user_id
+                admin_user_id
             )
 
             send_message(
@@ -1965,31 +1635,13 @@ def handle_message(
 
             return True
 
-        if amount > int(
-            target.get(
-                "tokens",
-                0
-            )
-        ):
-
-            send_message(
-                chat_id,
-                (
-                    "❌ موجودی کاربر کافی نیست.\n\n"
-                    f"🪙 موجودی فعلی: "
-                    f"<b>{target['tokens']:,}</b>"
-                )
-            )
-
-            return True
-
-        success = wallet.admin_remove_tokens(
+        success = wallet.admin_add_tokens(
             target_id,
             amount
         )
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         target = get_user_admin_info(
@@ -2001,8 +1653,10 @@ def handle_message(
             send_message(
                 chat_id,
                 (
-                    "✅ موجودی با موفقیت کاهش پیدا کرد.\n\n"
-                    f"🪙 مقدار کاهش: "
+                    "✅ <b>ژتون‌ها اضافه شدند.</b>\n\n"
+                    f"🆔 کاربر: "
+                    f"<code>{target_id}</code>\n"
+                    f"➕ مقدار: "
                     f"<b>{amount:,}</b>\n"
                     f"🪙 موجودی جدید: "
                     f"<b>{target['tokens']:,}</b>"
@@ -2016,14 +1670,130 @@ def handle_message(
 
             send_message(
                 chat_id,
-                "❌ کاهش موجودی انجام نشد.",
+                "❌ افزایش ژتون انجام نشد.",
                 admin_users_keyboard()
             )
 
         return True
 
     # ======================================
-    # قیمت ژتون
+    # کاهش ژتون
+    # ======================================
+
+    if state == "user_remove_tokens":
+
+        target_id = state_data.get(
+            "target_user_id"
+        )
+
+        try:
+
+            amount = int(
+                str(text).strip()
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            send_message(
+                chat_id,
+                "❌ فقط عدد وارد کن."
+            )
+
+            return True
+
+        if amount <= 0:
+
+            send_message(
+                chat_id,
+                "❌ مقدار باید بیشتر از صفر باشه."
+            )
+
+            return True
+
+        target = get_user_admin_info(
+            target_id
+        )
+
+        if not target:
+
+            clear_state(
+                admin_user_id
+            )
+
+            send_message(
+                chat_id,
+                "❌ کاربر پیدا نشد.",
+                admin_users_keyboard()
+            )
+
+            return True
+
+        current_tokens = int(
+            target.get(
+                "tokens",
+                0
+            )
+        )
+
+        if amount > current_tokens:
+
+            send_message(
+                chat_id,
+                (
+                    "❌ موجودی کاربر کافی نیست.\n\n"
+                    f"🪙 موجودی فعلی: "
+                    f"<b>{current_tokens:,}</b>"
+                )
+            )
+
+            return True
+
+        success = wallet.admin_remove_tokens(
+            target_id,
+            amount
+        )
+
+        clear_state(
+            admin_user_id
+        )
+
+        target = get_user_admin_info(
+            target_id
+        )
+
+        if success and target:
+
+            send_message(
+                chat_id,
+                (
+                    "✅ <b>ژتون‌ها کم شدند.</b>\n\n"
+                    f"🆔 کاربر: "
+                    f"<code>{target_id}</code>\n"
+                    f"➖ مقدار: "
+                    f"<b>{amount:,}</b>\n"
+                    f"🪙 موجودی جدید: "
+                    f"<b>{target['tokens']:,}</b>"
+                ),
+                admin_user_keyboard(
+                    target
+                )
+            )
+
+        else:
+
+            send_message(
+                chat_id,
+                "❌ کاهش ژتون انجام نشد.",
+                admin_users_keyboard()
+            )
+
+        return True
+
+    # ======================================
+    # مقدار ژتون
     # ======================================
 
     if state == "token_value":
@@ -2033,15 +1803,15 @@ def handle_message(
         ):
 
             clear_state(
-                user_id
+                admin_user_id
             )
 
             send_message(
                 chat_id,
                 (
-                    "✅ قیمت هر ژتون تغییر کرد.\n\n"
-                    f"🪙 قیمت جدید: "
-                    f"<b>{get_token_value():,}</b> تومان"
+                    "✅ تنظیم ذخیره شد.\n\n"
+                    f"🪙 مقدار: "
+                    f"<b>{get_token_value():,}</b>"
                 ),
                 admin_keyboard()
             )
@@ -2050,8 +1820,7 @@ def handle_message(
 
             send_message(
                 chat_id,
-                "❌ مقدار صحیح نیست.\n"
-                "یک عدد مثبت وارد کن."
+                "❌ عدد مثبت وارد کن."
             )
 
         return True
@@ -2067,17 +1836,17 @@ def handle_message(
         ):
 
             clear_state(
-                user_id
+                admin_user_id
             )
 
             send_message(
                 chat_id,
                 (
-                    "✅ پاداش دعوت‌کننده تغییر کرد.\n\n"
+                    "✅ جایزه دعوت‌کننده تغییر کرد.\n\n"
                     f"🎁 مقدار جدید: "
                     f"<b>{referral.get_referrer_reward():,}</b> ژتون"
                 ),
-                admin_referral_keyboard()
+                admin_keyboard()
             )
 
         else:
@@ -2100,17 +1869,17 @@ def handle_message(
         ):
 
             clear_state(
-                user_id
+                admin_user_id
             )
 
             send_message(
                 chat_id,
                 (
-                    "✅ پاداش دعوت‌شونده تغییر کرد.\n\n"
+                    "✅ جایزه دعوت‌شونده تغییر کرد.\n\n"
                     f"🎁 مقدار جدید: "
                     f"<b>{referral.get_referred_reward():,}</b> ژتون"
                 ),
-                admin_referral_keyboard()
+                admin_keyboard()
             )
 
         else:
@@ -2123,230 +1892,24 @@ def handle_message(
         return True
 
     # ======================================
-    # هزینه چرخونه
-    # ======================================
-
-    if state == "spin_cost":
-
-        if games.set_spin_cost(
-            text
-        ):
-
-            clear_state(
-                user_id
-            )
-
-            send_message(
-                chat_id,
-                (
-                    "✅ هزینه چرخونه تغییر کرد.\n\n"
-                    f"💰 هزینه جدید: "
-                    f"<b>{games.get_spin_cost():,}</b> ژتون"
-                ),
-                admin_spin_keyboard()
-            )
-
-        else:
-
-            send_message(
-                chat_id,
-                "❌ مقدار صحیح نیست."
-            )
-
-        return True
-
-    # ======================================
-    # تغییر نام جایزه
-    # ======================================
-
-    if state == "reward_name":
-
-        index = state_data.get(
-            "index"
-        )
-
-        if games.update_spin_reward(
-            index,
-            name=text.strip()
-        ):
-
-            clear_state(
-                user_id
-            )
-
-            send_message(
-                chat_id,
-                "✅ نام جایزه تغییر کرد.",
-                spin_rewards_keyboard()
-            )
-
-        else:
-
-            send_message(
-                chat_id,
-                "❌ تغییر نام انجام نشد."
-            )
-
-        return True
-
-    # ======================================
-    # تغییر مقدار جایزه
-    # ======================================
-
-    if state == "reward_value":
-
-        index = state_data.get(
-            "index"
-        )
-
-        try:
-
-            value = int(
-                text.strip()
-            )
-
-        except (
-            TypeError,
-            ValueError
-        ):
-
-            send_message(
-                chat_id,
-                "❌ فقط عدد وارد کن."
-            )
-
-            return True
-
-        if value < 0:
-
-            send_message(
-                chat_id,
-                "❌ مقدار نمی‌تونه منفی باشه."
-            )
-
-            return True
-
-        if games.update_spin_reward(
-            index,
-            reward=value
-        ):
-
-            clear_state(
-                user_id
-            )
-
-            send_message(
-                chat_id,
-                "✅ مقدار جایزه تغییر کرد.",
-                spin_rewards_keyboard()
-            )
-
-        else:
-
-            send_message(
-                chat_id,
-                (
-                    "❌ تغییر انجام نشد.\n"
-                    "احتمالاً مجموع احتمال‌ها مشکل دارد."
-                )
-            )
-
-        return True
-
-    # ======================================
-    # تغییر احتمال جایزه
-    # ======================================
-
-    if state == "reward_chance":
-
-        index = state_data.get(
-            "index"
-        )
-
-        try:
-
-            chance = float(
-                text.strip()
-            )
-
-        except (
-            TypeError,
-            ValueError
-        ):
-
-            send_message(
-                chat_id,
-                "❌ فقط عدد وارد کن."
-            )
-
-            return True
-
-        if chance < 0:
-
-            send_message(
-                chat_id,
-                "❌ احتمال نمی‌تونه منفی باشه."
-            )
-
-            return True
-
-        if games.update_spin_reward(
-            index,
-            chance=chance
-        ):
-
-            clear_state(
-                user_id
-            )
-
-            send_message(
-                chat_id,
-                "✅ احتمال جایزه تغییر کرد.",
-                spin_rewards_keyboard()
-            )
-
-        else:
-
-            send_message(
-                chat_id,
-                (
-                    "❌ تغییر انجام نشد.\n\n"
-                    "⚠️ مجموع احتمال تمام جایزه‌ها "
-                    "باید دقیقاً 100٪ باشد."
-                )
-            )
-
-        return True
-
-    # ======================================
-    # افزودن کانال جوین اجباری
+    # افزودن کانال
     # ======================================
 
     if state == "force_join_add":
 
-        channel = text.strip()
-
-        if not channel.startswith(
-            "@"
-        ):
-
-            channel = (
-                "@" + channel
-            )
-
         if add_force_join_channel(
-            channel
+            text
         ):
 
             clear_state(
-                user_id
+                admin_user_id
             )
 
             send_message(
                 chat_id,
                 (
-                    "✅ کانال اضافه شد.\n\n"
-                    f"📢 {channel}"
+                    "✅ کانال اضافه شد.\n\n" +
+                    force_join_text()
                 ),
                 force_join_keyboard()
             )
@@ -2356,21 +1919,21 @@ def handle_message(
             send_message(
                 chat_id,
                 (
-                    "❌ کانال اضافه نشد.\n"
-                    "ممکنه قبلاً وجود داشته باشه."
+                    "❌ اضافه کردن کانال انجام نشد.\n"
+                    "ممکنه کانال قبلاً وجود داشته باشه."
                 )
             )
 
         return True
 
     # ======================================
-    # Broadcast متنی
+    # همگانی متنی
     # ======================================
 
     if state == "broadcast_text":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         start_text_broadcast(
@@ -2381,31 +1944,29 @@ def handle_message(
         return True
 
     # ======================================
-    # Broadcast Forward
+    # همگانی Forward
     # ======================================
 
     if state == "broadcast_forward":
 
-        message_id = get_message_id(
-            message
+        source_chat_id = message.get(
+            "chat",
+            {}
+        ).get(
+            "id"
+        )
+
+        message_id = message.get(
+            "message_id"
         )
 
         clear_state(
-            user_id
+            admin_user_id
         )
-
-        if not message_id:
-
-            send_message(
-                chat_id,
-                "❌ پیام قابل Forward پیدا نشد."
-            )
-
-            return True
 
         start_forward_broadcast(
             chat_id,
-            chat_id,
+            source_chat_id,
             message_id
         )
 
@@ -2415,7 +1976,7 @@ def handle_message(
 
 
 # ==========================================
-# پردازش Callbackهای پنل
+# پردازش Callback پنل
 # ==========================================
 
 def handle_callback(
@@ -2430,7 +1991,6 @@ def handle_callback(
 
         return False
 
-    # فقط Callbackهای خود پنل
     if not data.startswith(
         "admin_"
     ):
@@ -2452,7 +2012,7 @@ def handle_callback(
         {}
     )
 
-    user_id = user.get(
+    admin_user_id = user.get(
         "id"
     )
 
@@ -2474,12 +2034,12 @@ def handle_callback(
         "message_id"
     )
 
-    if not user_id or not chat_id:
+    if not admin_user_id or not chat_id:
 
         return True
 
     if not is_admin(
-        user_id
+        admin_user_id
     ):
 
         return True
@@ -2491,7 +2051,7 @@ def handle_callback(
     if data == "admin_panel":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         edit_message_text(
@@ -2510,7 +2070,7 @@ def handle_callback(
     if data == "admin_stats":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         edit_message_text(
@@ -2529,7 +2089,7 @@ def handle_callback(
     if data == "admin_users":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         edit_message_text(
@@ -2542,13 +2102,13 @@ def handle_callback(
         return True
 
     # ======================================
-    # جستجوی کاربر
+    # جستجو
     # ======================================
 
     if data == "admin_user_search":
 
         set_state(
-            user_id,
+            admin_user_id,
             "user_search"
         )
 
@@ -2557,31 +2117,12 @@ def handle_callback(
             message_id,
             (
                 "🔍 <b>جستجوی کاربر</b>\n\n"
-                "ID عددی یا Username کاربر رو بفرست.\n\n"
+                "آیدی عددی یا یوزرنیم رو بفرست.\n\n"
                 "مثال:\n"
                 "<code>595450272</code>\n"
                 "<code>@username</code>\n\n"
                 "برای لغو: <b>لغو</b>"
             ),
-            admin_back_keyboard()
-        )
-
-        return True
-
-    # ======================================
-    # آخرین کاربران
-    # ======================================
-
-    if data == "admin_recent_users":
-
-        clear_state(
-            user_id
-        )
-
-        edit_message_text(
-            chat_id,
-            message_id,
-            recent_users_text(),
             admin_back_keyboard()
         )
 
@@ -2594,7 +2135,7 @@ def handle_callback(
     if data == "admin_banned_users":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         edit_message_text(
@@ -2607,13 +2148,13 @@ def handle_callback(
         return True
 
     # ======================================
-    # قیمت ژتون
+    # تنظیم ژتون
     # ======================================
 
     if data == "admin_token":
 
         set_state(
-            user_id,
+            admin_user_id,
             "token_value"
         )
 
@@ -2621,32 +2162,13 @@ def handle_callback(
             chat_id,
             message_id,
             (
-                "🪙 <b>قیمت ژتون</b>\n\n"
-                f"قیمت فعلی هر ژتون:\n"
-                f"<b>{get_token_value():,}</b> تومان\n\n"
-                "قیمت جدید رو به صورت عدد بفرست.\n\n"
+                "🪙 <b>تنظیم ژتون</b>\n\n"
+                f"مقدار فعلی:\n"
+                f"<b>{get_token_value():,}</b>\n\n"
+                "مقدار جدید رو بفرست.\n\n"
                 "برای لغو: <b>لغو</b>"
             ),
             admin_back_keyboard()
-        )
-
-        return True
-
-    # ======================================
-    # تنظیمات دعوت
-    # ======================================
-
-    if data == "admin_referral":
-
-        clear_state(
-            user_id
-        )
-
-        edit_message_text(
-            chat_id,
-            message_id,
-            referral_settings_text(),
-            admin_referral_keyboard()
         )
 
         return True
@@ -2658,7 +2180,7 @@ def handle_callback(
     if data == "admin_referrer":
 
         set_state(
-            user_id,
+            admin_user_id,
             "referrer_reward"
         )
 
@@ -2684,7 +2206,7 @@ def handle_callback(
     if data == "admin_referred":
 
         set_state(
-            user_id,
+            admin_user_id,
             "referred_reward"
         )
 
@@ -2704,276 +2226,13 @@ def handle_callback(
         return True
 
     # ======================================
-    # تنظیمات چرخونه
-    # ======================================
-
-    if data == "admin_spin":
-
-        clear_state(
-            user_id
-        )
-
-        edit_message_text(
-            chat_id,
-            message_id,
-            spin_settings_text(),
-            admin_spin_keyboard()
-        )
-
-        return True
-
-    # ======================================
-    # هزینه چرخونه
-    # ======================================
-
-    if data == "admin_spin_cost":
-
-        set_state(
-            user_id,
-            "spin_cost"
-        )
-
-        edit_message_text(
-            chat_id,
-            message_id,
-            (
-                "💰 <b>هزینه چرخونه</b>\n\n"
-                f"هزینه فعلی:\n"
-                f"<b>{games.get_spin_cost():,}</b> ژتون\n\n"
-                "هزینه جدید رو بفرست.\n\n"
-                "برای لغو: <b>لغو</b>"
-            ),
-            admin_back_keyboard()
-        )
-
-        return True
-
-    # ======================================
-    # مدیریت جوایز چرخونه
-    # ======================================
-
-    if data == "admin_spin_rewards":
-
-        clear_state(
-            user_id
-        )
-
-        edit_message_text(
-            chat_id,
-            message_id,
-            spin_rewards_text(),
-            spin_rewards_keyboard()
-        )
-
-        return True
-
-    # ======================================
-    # ویرایش جایزه
-    # ======================================
-
-    if data.startswith(
-        "admin_reward_"
-    ):
-
-        parts = data.split(
-            "_"
-        )
-
-        # admin_reward_INDEX
-
-        if len(parts) == 3:
-
-            try:
-
-                index = int(
-                    parts[2]
-                )
-
-            except ValueError:
-
-                return True
-
-            rewards = games.get_spin_rewards()
-
-            if (
-                index < 0
-                or index >= len(rewards)
-            ):
-
-                return True
-
-            item = rewards[index]
-
-            edit_message_text(
-                chat_id,
-                message_id,
-                (
-                    "🎁 <b>ویرایش جایزه</b>\n\n"
-                    f"{item['name']}\n\n"
-                    f"🪙 مقدار: "
-                    f"<b>{item['reward']}</b>\n"
-                    f"🎯 احتمال: "
-                    f"<b>{item['chance']}%</b>"
-                ),
-                reward_edit_keyboard(
-                    index
-                )
-            )
-
-            return True
-
-        # admin_reward_name_INDEX
-
-        if (
-            len(parts) == 4
-            and parts[2] == "name"
-        ):
-
-            try:
-
-                index = int(
-                    parts[3]
-                )
-
-            except ValueError:
-
-                return True
-
-            set_state(
-                user_id,
-                "reward_name",
-                index=index
-            )
-
-            edit_message_text(
-                chat_id,
-                message_id,
-                (
-                    "📝 <b>تغییر نام جایزه</b>\n\n"
-                    "نام جدید جایزه رو بفرست.\n\n"
-                    "برای لغو: <b>لغو</b>"
-                ),
-                admin_back_keyboard()
-            )
-
-            return True
-
-        # admin_reward_value_INDEX
-
-        if (
-            len(parts) == 4
-            and parts[2] == "value"
-        ):
-
-            try:
-
-                index = int(
-                    parts[3]
-                )
-
-            except ValueError:
-
-                return True
-
-            set_state(
-                user_id,
-                "reward_value",
-                index=index
-            )
-
-            edit_message_text(
-                chat_id,
-                message_id,
-                (
-                    "🪙 <b>تغییر مقدار جایزه</b>\n\n"
-                    "مقدار جدید رو به عدد بفرست.\n\n"
-                    "برای لغو: <b>لغو</b>"
-                ),
-                admin_back_keyboard()
-            )
-
-            return True
-
-        # admin_reward_chance_INDEX
-
-        if (
-            len(parts) == 4
-            and parts[2] == "chance"
-        ):
-
-            try:
-
-                index = int(
-                    parts[3]
-                )
-
-            except ValueError:
-
-                return True
-
-            set_state(
-                user_id,
-                "reward_chance",
-                index=index
-            )
-
-            edit_message_text(
-                chat_id,
-                message_id,
-                (
-                    "🎯 <b>تغییر احتمال جایزه</b>\n\n"
-                    "احتمال جدید رو وارد کن.\n"
-                    "مثلاً: <code>12.5</code>\n\n"
-                    "⚠️ مجموع احتمال‌ها باید 100٪ بشه.\n\n"
-                    "برای لغو: <b>لغو</b>"
-                ),
-                admin_back_keyboard()
-            )
-
-            return True
-
-    # ======================================
-    # بازنشانی چرخونه
-    # ======================================
-
-    if data == "admin_spin_reset":
-
-        clear_state(
-            user_id
-        )
-
-        if games.reset_spin_settings():
-
-            edit_message_text(
-                chat_id,
-                message_id,
-                (
-                    "✅ تنظیمات چرخونه به حالت پیش‌فرض برگشت."
-                    "\n\n" +
-                    spin_settings_text()
-                ),
-                admin_spin_keyboard()
-            )
-
-        else:
-
-            edit_message_text(
-                chat_id,
-                message_id,
-                "❌ بازنشانی تنظیمات انجام نشد.",
-                admin_spin_keyboard()
-            )
-
-        return True
-
-    # ======================================
     # جوین اجباری
     # ======================================
 
     if data == "admin_force_join":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         edit_message_text(
@@ -2986,7 +2245,7 @@ def handle_callback(
         return True
 
     # ======================================
-    # روشن / خاموش جوین اجباری
+    # روشن / خاموش
     # ======================================
 
     if data == "admin_force_toggle":
@@ -2997,7 +2256,7 @@ def handle_callback(
             not current
         ):
 
-            new_status = (
+            status = (
                 "روشن"
                 if not current
                 else
@@ -3008,8 +2267,8 @@ def handle_callback(
                 chat_id,
                 message_id,
                 (
-                    f"✅ جوین اجباری <b>{new_status}</b> شد.\n\n"
-                    +
+                    f"✅ جوین اجباری "
+                    f"<b>{status}</b> شد.\n\n" +
                     force_join_text()
                 ),
                 force_join_keyboard()
@@ -3033,7 +2292,7 @@ def handle_callback(
     if data == "admin_force_add":
 
         set_state(
-            user_id,
+            admin_user_id,
             "force_join_add"
         )
 
@@ -3042,7 +2301,7 @@ def handle_callback(
             message_id,
             (
                 "➕ <b>افزودن کانال</b>\n\n"
-                "Username کانال رو بفرست.\n\n"
+                "یوزرنیم کانال رو بفرست.\n\n"
                 "مثال:\n"
                 "<code>@mychannel</code>\n\n"
                 "برای لغو: <b>لغو</b>"
@@ -3062,7 +2321,7 @@ def handle_callback(
 
         try:
 
-            index = int(
+            channel_id = int(
                 data.rsplit(
                     "_",
                     1
@@ -3076,59 +2335,9 @@ def handle_callback(
 
             return True
 
-        channels = get_force_join_channels()
-
-        if (
-            index < 0
-            or index >= len(channels)
+        if remove_force_join_channel_by_id(
+            channel_id
         ):
-
-            return True
-
-        channel = channels[index]
-
-        # اگر تابع حذف بر اساس ID وجود دارد،
-        # باید اطلاعات ID کانال از دیتابیس گرفته شود.
-        #
-        # برای جلوگیری از حدس زدن ساختار دیتابیس،
-        # فعلاً از تابع حذف بر اساس ID فقط در صورتی
-        # استفاده می‌کنیم که آیتم کانال خودش دیکشنری باشد.
-
-        if isinstance(
-            channel,
-            dict
-        ):
-
-            channel_id = channel.get(
-                "id"
-            )
-
-            if channel_id is None:
-
-                channel_id = channel.get(
-                    "channel_id"
-                )
-
-            if channel_id is None:
-
-                return True
-
-            removed = remove_force_join_channel_by_id(
-                channel_id
-            )
-
-        else:
-
-            # اگر get_force_join_channels فقط
-            # username برمی‌گرداند، این بخش نیازمند
-            # تابع حذف بر اساس username در database.py است.
-            #
-            # فعلاً بدون حدس زدن تابعی که وجود ندارد،
-            # عملیات را متوقف می‌کنیم.
-
-            return True
-
-        if removed:
 
             edit_message_text(
                 chat_id,
@@ -3158,7 +2367,7 @@ def handle_callback(
     if data == "admin_broadcast":
 
         clear_state(
-            user_id
+            admin_user_id
         )
 
         edit_message_text(
@@ -3177,7 +2386,7 @@ def handle_callback(
     if data == "admin_broadcast_text":
 
         set_state(
-            user_id,
+            admin_user_id,
             "broadcast_text"
         )
 
@@ -3186,9 +2395,8 @@ def handle_callback(
             message_id,
             (
                 "📣 <b>همگانی متنی</b>\n\n"
-                "متنی که می‌خوای برای همه کاربران "
-                "ارسال بشه رو بفرست.\n\n"
-                "⚡ ارسال سریع انجام می‌شه.\n\n"
+                "متنی که می‌خوای برای همه "
+                "کاربران ارسال بشه رو بفرست.\n\n"
                 "برای لغو: <b>لغو</b>"
             ),
             admin_back_keyboard()
@@ -3203,7 +2411,7 @@ def handle_callback(
     if data == "admin_broadcast_forward":
 
         set_state(
-            user_id,
+            admin_user_id,
             "broadcast_forward"
         )
 
@@ -3233,8 +2441,6 @@ def handle_callback(
             "_"
         )
 
-        # admin_user_ACTION_ID
-
         if len(parts) < 4:
 
             return True
@@ -3256,73 +2462,108 @@ def handle_callback(
 
             return True
 
-        # ------------------------------
+        # ==================================
         # بن
-        # ------------------------------
+        # ==================================
 
         if action == "ban":
 
-            if ban_user(
-                target_id
+            if target_id == int(
+                config.ADMIN_ID
             ):
 
-                target = get_user_admin_info(
-                    target_id
-                )
-
-                if target:
-
-                    edit_message_text(
-                        chat_id,
-                        message_id,
-                        (
-                            "🚫 <b>کاربر بن شد.</b>\n\n" +
-                            user_info_text(
-                                target
-                            )
-                        ),
-                        admin_user_keyboard(
-                            target
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    "❌ نمی‌تونی خود ادمین رو بن کنی.",
+                    admin_user_keyboard(
+                        get_user_admin_info(
+                            target_id
                         )
                     )
+                )
+
+                return True
+
+            success = ban_user(
+                target_id
+            )
+
+            target = get_user_admin_info(
+                target_id
+            )
+
+            if success and target:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    (
+                        "🚫 <b>کاربر بن شد.</b>\n\n" +
+                        user_info_text(
+                            target
+                        )
+                    ),
+                    admin_user_keyboard(
+                        target
+                    )
+                )
+
+            else:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    "❌ بن کردن انجام نشد.",
+                    admin_users_keyboard()
+                )
 
             return True
 
-        # ------------------------------
+        # ==================================
         # آن‌بن
-        # ------------------------------
+        # ==================================
 
         if action == "unban":
 
-            if unban_user(
+            success = unban_user(
                 target_id
-            ):
+            )
 
-                target = get_user_admin_info(
-                    target_id
-                )
+            target = get_user_admin_info(
+                target_id
+            )
 
-                if target:
+            if success and target:
 
-                    edit_message_text(
-                        chat_id,
-                        message_id,
-                        (
-                            "✅ <b>کاربر آن‌بن شد.</b>\n\n" +
-                            user_info_text(
-                                target
-                            )
-                        ),
-                        admin_user_keyboard(
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    (
+                        "✅ <b>کاربر آن‌بن شد.</b>\n\n" +
+                        user_info_text(
                             target
                         )
+                    ),
+                    admin_user_keyboard(
+                        target
                     )
+                )
+
+            else:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    "❌ آن‌بن کردن انجام نشد.",
+                    admin_users_keyboard()
+                )
 
             return True
 
-        # ------------------------------
+        # ==================================
         # بروزرسانی
-        # ------------------------------
+        # ==================================
 
         if action == "refresh":
 
@@ -3354,16 +2595,35 @@ def handle_callback(
 
             return True
 
-        # ------------------------------
-        # افزایش
-        # ------------------------------
+        # ==================================
+        # افزایش ژتون
+        # ==================================
 
         if action == "add":
 
+            target = get_user_admin_info(
+                target_id
+            )
+
+            if not target:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    "❌ کاربر پیدا نشد.",
+                    admin_users_keyboard()
+                )
+
+                return True
+
+            # نکته مهم:
+            # target_id با نام user_id ذخیره نمی‌شود.
+            # چون user_id قبلاً پارامتر ادمین set_state است.
+
             set_state(
-                user_id,
+                admin_user_id,
                 "user_add_tokens",
-                user_id=target_id
+                target_user_id=target_id
             )
 
             edit_message_text(
@@ -3381,16 +2641,35 @@ def handle_callback(
 
             return True
 
-        # ------------------------------
-        # کاهش
-        # ------------------------------
+        # ==================================
+        # کاهش ژتون
+        # ==================================
 
         if action == "remove":
 
+            target = get_user_admin_info(
+                target_id
+            )
+
+            if not target:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    "❌ کاربر پیدا نشد.",
+                    admin_users_keyboard()
+                )
+
+                return True
+
+            # اصلاح اصلی باگ:
+            # قبلاً user_id=target_id
+            # باعث تکراری شدن آرگومان user_id می‌شد.
+
             set_state(
-                user_id,
+                admin_user_id,
                 "user_remove_tokens",
-                user_id=target_id
+                target_user_id=target_id
             )
 
             edit_message_text(
