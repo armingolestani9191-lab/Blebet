@@ -9,7 +9,8 @@ import api
 import config
 
 from database import (
-    init_database
+    init_database,
+    get_user_admin_info
 )
 
 # ==========================================
@@ -37,8 +38,7 @@ from users import (
 )
 
 from wallet import (
-    get_balance,
-    get_balance_value
+    get_balance
 )
 
 from referral import (
@@ -49,6 +49,15 @@ from referral import (
 from games import (
     spin_wheel
 )
+
+
+# ==========================================
+# تنظیمات عمومی
+# ==========================================
+
+POLL_TIMEOUT = 30
+POLL_ERROR_SLEEP = 2
+UPDATE_ERROR_SLEEP = 1
 
 
 # ==========================================
@@ -136,7 +145,7 @@ def games_keyboard():
 
 
 # ==========================================
-# دکمه بازگشت
+# کیبورد بازگشت
 # ==========================================
 
 def back_keyboard():
@@ -159,32 +168,28 @@ def back_keyboard():
 # متن صفحه اصلی
 # ==========================================
 
-def main_text(user_id):
+def main_text(
+    user_id
+):
 
     tokens = get_balance(
         user_id
     )
 
-    value = get_balance_value(
-        tokens
-    )
-
     active_users = get_active_users()
 
     return (
-        "🎰 <b>BaleBet</b>\n\n"
-        "🍀 خوش اومدی! شانس با توئه.\n\n"
+        "🎮 <b>BaleBet</b>\n\n"
 
-        f"🟢 کاربران درحال بازی: "
+        "🍀 خوش اومدی!\n\n"
+
+        f"🟢 کاربران فعال: "
         f"<b>{active_users:,}</b> نفر\n\n"
 
         f"🪙 موجودی ژتون: "
-        f"<b>{tokens:,}</b>\n"
+        f"<b>{tokens:,}</b>\n\n"
 
-        f"💵 ارزش کل به تومان: "
-        f"<b>{value:,}</b>\n\n"
-
-        "👇 انتخاب کن:"
+        "👇 یک گزینه رو انتخاب کن:"
     )
 
 
@@ -198,14 +203,92 @@ def register_user_activity(
     first_name=""
 ):
 
-    get_or_create_user(
-        user_id,
-        username,
-        first_name
-    )
+    try:
 
-    update_activity(
+        get_or_create_user(
+            user_id,
+            username,
+            first_name
+        )
+
+        update_activity(
+            user_id
+        )
+
+    except Exception as error:
+
+        print(
+            f"❌ User activity error: {error}"
+        )
+
+
+# ==========================================
+# بررسی بن بودن کاربر
+# ==========================================
+
+def is_user_banned(
+    user_id
+):
+
+    try:
+
+        user = get_user_admin_info(
+            user_id
+        )
+
+        if not user:
+
+            return False
+
+        return bool(
+            user.get(
+                "banned",
+                False
+            )
+        )
+
+    except Exception as error:
+
+        print(
+            f"❌ Ban check error: {error}"
+        )
+
+        return False
+
+
+# ==========================================
+# بررسی دسترسی کاربر
+# ==========================================
+
+def user_is_allowed(
+    user_id
+):
+
+    if admin.is_admin(
         user_id
+    ):
+
+        return True
+
+    if is_user_banned(
+        user_id
+    ):
+
+        return False
+
+    return True
+
+
+# ==========================================
+# پیام کاربر بن‌شده
+# ==========================================
+
+def banned_text():
+
+    return (
+        "🚫 <b>دسترسی شما مسدود شده</b>\n\n"
+        "دسترسی این حساب توسط مدیریت "
+        "به حالت مسدود درآمده است."
     )
 
 
@@ -213,7 +296,9 @@ def register_user_activity(
 # متن دعوت دوستان
 # ==========================================
 
-def referral_text(user_id):
+def referral_text(
+    user_id
+):
 
     count = get_referral_count(
         user_id
@@ -221,6 +306,7 @@ def referral_text(user_id):
 
     return (
         "👥 <b>دعوت دوستان</b>\n\n"
+
         "🎁 دوستات رو دعوت کن و ژتون بگیر!\n\n"
 
         f"👤 پاداش شما: "
@@ -238,10 +324,115 @@ def referral_text(user_id):
 
 
 # ==========================================
+# نمایش پیام جوین اجباری
+# ==========================================
+
+def show_force_join(
+    chat_id
+):
+
+    try:
+
+        send_message(
+            chat_id,
+            admin.force_join_user_text(),
+            admin.force_join_user_keyboard()
+        )
+
+    except Exception as error:
+
+        print(
+            f"❌ Force join send error: {error}"
+        )
+
+
+# ==========================================
+# بررسی دسترسی عادی کاربر
+# ==========================================
+
+def check_user_access(
+    user_id,
+    chat_id=None
+):
+
+    # ======================================
+    # ادمین همیشه دسترسی دارد
+    # ======================================
+
+    if admin.is_admin(
+        user_id
+    ):
+
+        return True
+
+    # ======================================
+    # بررسی بن
+    # ======================================
+
+    if is_user_banned(
+        user_id
+    ):
+
+        if chat_id:
+
+            try:
+
+                send_message(
+                    chat_id,
+                    banned_text()
+                )
+
+            except Exception:
+
+                pass
+
+        return False
+
+    # ======================================
+    # بررسی جوین اجباری
+    # ======================================
+
+    try:
+
+        joined = admin.check_force_join(
+            user_id
+        )
+
+    except Exception as error:
+
+        print(
+            f"❌ Force join check error: {error}"
+        )
+
+        joined = False
+
+    if not joined:
+
+        if chat_id:
+
+            show_force_join(
+                chat_id
+            )
+
+        return False
+
+    return True
+
+
+# ==========================================
 # پردازش پیام
 # ==========================================
 
-def handle_message(message):
+def handle_message(
+    message
+):
+
+    if not isinstance(
+        message,
+        dict
+    ):
+
+        return
 
     chat = message.get(
         "chat",
@@ -279,6 +470,10 @@ def handle_message(message):
         ""
     )
 
+    # ======================================
+    # ثبت کاربر و فعالیت
+    # ======================================
+
     register_user_activity(
         user_id,
         username,
@@ -287,11 +482,62 @@ def handle_message(message):
 
     # ======================================
     # پنل ادمین
+    #
+    # حتماً قبل از بن و جوین بررسی می‌شود.
     # ======================================
 
-    if admin.handle_message(
-        message
+    try:
+
+        if admin.handle_message(
+            message
+        ):
+
+            return
+
+    except Exception as error:
+
+        print(
+            f"❌ Admin message error: {error}"
+        )
+
+        if admin.is_admin(
+            user_id
+        ):
+
+            try:
+
+                send_message(
+                    chat_id,
+                    (
+                        "❌ خطایی در پنل ادمین رخ داد.\n\n"
+                        f"<code>{error}</code>"
+                    )
+                )
+
+            except Exception:
+
+                pass
+
+        return
+
+    # ======================================
+    # بررسی بن
+    # ======================================
+
+    if is_user_banned(
+        user_id
     ):
+
+        try:
+
+            send_message(
+                chat_id,
+                banned_text()
+            )
+
+        except Exception:
+
+            pass
 
         return
 
@@ -299,7 +545,9 @@ def handle_message(message):
     # /start
     # ======================================
 
-    if text.startswith("/start"):
+    if text.startswith(
+        "/start"
+    ):
 
         # ==================================
         # بررسی جوین اجباری
@@ -309,58 +557,93 @@ def handle_message(message):
             user_id
         ):
 
-            if not admin.check_force_join(
-                user_id
-            ):
+            try:
 
-                send_message(
-                    chat_id,
-                    admin.force_join_user_text(),
-                    admin.force_join_user_keyboard()
+                joined = admin.check_force_join(
+                    user_id
+                )
+
+            except Exception as error:
+
+                print(
+                    f"❌ Force join /start error: {error}"
+                )
+
+                joined = False
+
+            if not joined:
+
+                show_force_join(
+                    chat_id
                 )
 
                 return
+
+        # ==================================
+        # پردازش پارامتر /start
+        # ==================================
 
         parts = text.split(
             maxsplit=1
         )
 
-        # ==================================
-        # بررسی لینک دعوت
-        # ==================================
-
         if len(parts) == 2:
 
             payload = parts[1].strip()
+
+            # ==================================
+            # لینک دعوت
+            # ==================================
 
             if payload.startswith(
                 "ref_"
             ):
 
+                referrer_text = payload[
+                    4:
+                ].strip()
+
                 try:
 
                     referrer_id = int(
-                        payload[4:]
+                        referrer_text
                     )
 
-                    create_referral(
-                        referrer_id,
-                        user_id
-                    )
+                    if (
+                        referrer_id != user_id
+                    ):
 
-                except ValueError:
+                        create_referral(
+                            referrer_id,
+                            user_id
+                        )
+
+                except (
+                    TypeError,
+                    ValueError
+                ):
 
                     pass
 
         # ==================================
-        # نمایش منو
+        # نمایش منوی اصلی
         # ==================================
 
-        send_message(
-            chat_id,
-            main_text(user_id),
-            main_keyboard()
-        )
+        try:
+
+            send_message(
+                chat_id,
+                main_text(
+                    user_id
+                ),
+                main_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Start message error: {error}"
+            )
 
         return
 
@@ -369,14 +652,24 @@ def handle_message(message):
 # پردازش دکمه‌ها
 # ==========================================
 
-def handle_callback(callback):
+def handle_callback(
+    callback
+):
+
+    if not isinstance(
+        callback,
+        dict
+    ):
+
+        return
 
     callback_id = callback.get(
         "id"
     )
 
     data = callback.get(
-        "data"
+        "data",
+        ""
     )
 
     message = callback.get(
@@ -406,11 +699,23 @@ def handle_callback(callback):
         "id"
     )
 
+    # ======================================
+    # پاسخ سریع به Callback
+    # ======================================
+
     if callback_id:
 
-        answer_callback_query(
-            callback_id
-        )
+        try:
+
+            answer_callback_query(
+                callback_id
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Callback answer error: {error}"
+            )
 
     if (
         not chat_id
@@ -429,6 +734,10 @@ def handle_callback(callback):
         ""
     )
 
+    # ======================================
+    # ثبت فعالیت
+    # ======================================
+
     register_user_activity(
         user_id,
         username,
@@ -437,16 +746,74 @@ def handle_callback(callback):
 
     # ======================================
     # پنل ادمین
+    #
+    # باید قبل از محدودیت جوین بررسی شود.
     # ======================================
 
-    if admin.handle_callback(
-        callback
+    try:
+
+        if admin.handle_callback(
+            callback
+        ):
+
+            return
+
+    except Exception as error:
+
+        print(
+            f"❌ Admin callback error: {error}"
+        )
+
+        if admin.is_admin(
+            user_id
+        ):
+
+            try:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    (
+                        "❌ خطایی در پنل ادمین رخ داد.\n\n"
+                        f"<code>{error}</code>"
+                    ),
+                    admin.admin_back_keyboard()
+                )
+
+            except Exception:
+
+                pass
+
+        return
+
+    # ======================================
+    # بررسی بن
+    # ======================================
+
+    if is_user_banned(
+        user_id
     ):
+
+        try:
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                banned_text(),
+                back_keyboard()
+            )
+
+        except Exception:
+
+            pass
 
         return
 
     # ======================================
     # بررسی جوین اجباری
+    #
+    # خود دکمه check_join مستثنی است
+    # چون باید اجازه بدهیم عضویت را بررسی کند.
     # ======================================
 
     if data != "check_join":
@@ -455,16 +822,36 @@ def handle_callback(callback):
             user_id
         ):
 
-            if not admin.check_force_join(
-                user_id
-            ):
+            try:
 
-                edit_message_text(
-                    chat_id,
-                    message_id,
-                    admin.force_join_user_text(),
-                    admin.force_join_user_keyboard()
+                joined = admin.check_force_join(
+                    user_id
                 )
+
+            except Exception as error:
+
+                print(
+                    f"❌ Force join callback error: {error}"
+                )
+
+                joined = False
+
+            if not joined:
+
+                try:
+
+                    edit_message_text(
+                        chat_id,
+                        message_id,
+                        admin.force_join_user_text(),
+                        admin.force_join_user_keyboard()
+                    )
+
+                except Exception as error:
+
+                    print(
+                        f"❌ Force join edit error: {error}"
+                    )
 
                 return
 
@@ -474,25 +861,63 @@ def handle_callback(callback):
 
     if data == "check_join":
 
-        if admin.check_force_join(
+        if admin.is_admin(
             user_id
         ):
 
-            edit_message_text(
-                chat_id,
-                message_id,
-                main_text(user_id),
-                main_keyboard()
-            )
+            joined = True
 
         else:
 
-            edit_message_text(
-                chat_id,
-                message_id,
-                admin.force_join_user_text(),
-                admin.force_join_user_keyboard()
-            )
+            try:
+
+                joined = admin.check_force_join(
+                    user_id
+                )
+
+            except Exception as error:
+
+                print(
+                    f"❌ Check join error: {error}"
+                )
+
+                joined = False
+
+        if joined:
+
+            try:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    main_text(
+                        user_id
+                    ),
+                    main_keyboard()
+                )
+
+            except Exception as error:
+
+                print(
+                    f"❌ Join success edit error: {error}"
+                )
+
+        else:
+
+            try:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    admin.force_join_user_text(),
+                    admin.force_join_user_keyboard()
+                )
+
+            except Exception as error:
+
+                print(
+                    f"❌ Join failed edit error: {error}"
+                )
 
         return
 
@@ -502,15 +927,24 @@ def handle_callback(callback):
 
     if data == "home":
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            main_text(user_id),
-            main_keyboard()
-        )
+        try:
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                main_text(
+                    user_id
+                ),
+                main_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Home error: {error}"
+            )
 
         return
-
 
     # ======================================
     # بازی‌ها
@@ -518,27 +952,35 @@ def handle_callback(callback):
 
     if data == "games":
 
-        spin_cost = games.get_spin_cost()
+        try:
 
-        text = (
-            "🎮 <b>بازی‌ها</b>\n\n"
-            "🎡 <b>چرخونه</b>\n"
+            spin_cost = games.get_spin_cost()
 
-            f"هر چرخش: "
-            f"<b>{spin_cost}</b> ژتون\n\n"
+            text = (
+                "🎮 <b>بازی‌ها</b>\n\n"
 
-            "👇 بازی موردنظرت رو انتخاب کن:"
-        )
+                "🎡 <b>چرخونه</b>\n\n"
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            games_keyboard()
-        )
+                f"🪙 هزینه هر چرخش: "
+                f"<b>{spin_cost:,}</b> ژتون\n\n"
+
+                "👇 بازی موردنظرت رو انتخاب کن:"
+            )
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                games_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Games menu error: {error}"
+            )
 
         return
-
 
     # ======================================
     # چرخونه
@@ -546,53 +988,60 @@ def handle_callback(callback):
 
     if data == "wheel":
 
-        balance = get_balance(
-            user_id
-        )
+        try:
 
-        spin_cost = games.get_spin_cost()
+            balance = get_balance(
+                user_id
+            )
 
-        text = (
-            "🎡 <b>چرخونه شانس</b>\n\n"
+            spin_cost = games.get_spin_cost()
 
-            f"🪙 هزینه هر چرخش: "
-            f"<b>{spin_cost}</b> ژتون\n\n"
+            text = (
+                "🎡 <b>چرخونه شانس</b>\n\n"
 
-            f"💰 موجودی شما: "
-            f"<b>{balance}</b> ژتون\n\n"
+                f"🪙 هزینه هر چرخش: "
+                f"<b>{spin_cost:,}</b> ژتون\n\n"
 
-            "🎁 شاید جایزه ۵۰ ژتونی نصیبت بشه!"
-        )
+                f"🪙 موجودی شما: "
+                f"<b>{balance:,}</b> ژتون\n\n"
 
-        keyboard = json.dumps({
-            "inline_keyboard": [
+                "🎁 آماده‌ای؟"
+            )
 
-                [
-                    {
-                        "text": "🎡 چرخوندن",
-                        "callback_data": "spin"
-                    }
-                ],
+            keyboard = json.dumps({
+                "inline_keyboard": [
 
-                [
-                    {
-                        "text": "‹ بازگشت",
-                        "callback_data": "games"
-                    }
+                    [
+                        {
+                            "text": "🎡 چرخوندن",
+                            "callback_data": "spin"
+                        }
+                    ],
+
+                    [
+                        {
+                            "text": "‹ بازگشت",
+                            "callback_data": "games"
+                        }
+                    ]
+
                 ]
+            })
 
-            ]
-        })
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                keyboard
+            )
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            keyboard
-        )
+        except Exception as error:
+
+            print(
+                f"❌ Wheel menu error: {error}"
+            )
 
         return
-
 
     # ======================================
     # اجرای چرخونه
@@ -600,12 +1049,40 @@ def handle_callback(callback):
 
     if data == "spin":
 
-        result = spin_wheel(
-            user_id
-        )
+        try:
+
+            result = spin_wheel(
+                user_id
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Spin error: {error}"
+            )
+
+            result = {
+                "success": False,
+                "message": (
+                    "❌ هنگام اجرای بازی خطایی رخ داد."
+                )
+            }
+
+        if not isinstance(
+            result,
+            dict
+        ):
+
+            result = {
+                "success": False,
+                "message": (
+                    "❌ پاسخ نامعتبر از بازی دریافت شد."
+                )
+            }
 
         if not result.get(
-            "success"
+            "success",
+            False
         ):
 
             text = result.get(
@@ -633,22 +1110,45 @@ def handle_callback(callback):
                 ]
             })
 
-            edit_message_text(
-                chat_id,
-                message_id,
-                text,
-                keyboard
-            )
+            try:
+
+                edit_message_text(
+                    chat_id,
+                    message_id,
+                    text,
+                    keyboard
+                )
+
+            except Exception as error:
+
+                print(
+                    f"❌ Spin result edit error: {error}"
+                )
 
             return
 
-        reward = result[
-            "reward"
-        ]
+        try:
 
-        name = result[
-            "name"
-        ]
+            reward = int(
+                result.get(
+                    "reward",
+                    0
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            reward = 0
+
+        name = str(
+            result.get(
+                "name",
+                "نتیجه بازی"
+            )
+        )
 
         new_balance = get_balance(
             user_id
@@ -662,23 +1162,23 @@ def handle_callback(callback):
                 f"{name}\n\n"
 
                 f"🎁 جایزه: "
-                f"<b>{reward}</b> ژتون\n\n"
+                f"<b>{reward:,}</b> ژتون\n\n"
 
                 f"🪙 موجودی جدید: "
-                f"<b>{new_balance}</b> ژتون"
+                f"<b>{new_balance:,}</b> ژتون"
             )
 
         else:
 
             text = (
-                "😅 <b>این بار پوچ شد!</b>\n\n"
+                "😅 <b>این بار چیزی نبردی!</b>\n\n"
 
                 f"{name}\n\n"
 
                 f"🪙 موجودی جدید: "
-                f"<b>{new_balance}</b> ژتون\n\n"
+                f"<b>{new_balance:,}</b> ژتون\n\n"
 
-                "دوباره شانست رو امتحان کن! 🎡"
+                "دوباره امتحان کن! 🎡"
             )
 
         keyboard = json.dumps({
@@ -686,30 +1186,44 @@ def handle_callback(callback):
 
                 [
                     {
-                        "text": "🎡 دوباره بچرخون",
+                        "text": "🎡 دوباره بازی کن",
                         "callback_data": "spin"
                     }
                 ],
 
                 [
                     {
-                        "text": "‹ بازگشت به منو",
+                        "text": "‹ بازگشت به بازی‌ها",
                         "callback_data": "games"
+                    }
+                ],
+
+                [
+                    {
+                        "text": "🏠 منوی اصلی",
+                        "callback_data": "home"
                     }
                 ]
 
             ]
         })
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            keyboard
-        )
+        try:
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                keyboard
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Spin result error: {error}"
+            )
 
         return
-
 
     # ======================================
     # کیف پول
@@ -717,38 +1231,36 @@ def handle_callback(callback):
 
     if data == "wallet":
 
-        tokens = get_balance(
-            user_id
-        )
+        try:
 
-        value = get_balance_value(
-            tokens
-        )
+            tokens = get_balance(
+                user_id
+            )
 
-        token_value = admin.get_token_value()
+            text = (
+                "🪙 <b>کیف پول بازی</b>\n\n"
 
-        text = (
-            "🪙 <b>کیف پول شما</b>\n\n"
+                f"🪙 موجودی ژتون:\n"
+                f"<b>{tokens:,}</b>\n\n"
 
-            f"🪙 موجودی ژتون: "
-            f"<b>{tokens:,}</b>\n"
+                "ℹ️ ژتون‌ها فقط واحد داخل بازی "
+                "هستند و ارزش واقعی ندارند."
+            )
 
-            f"💵 ارزش کل به تومان: "
-            f"<b>{value:,}</b>\n\n"
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                back_keyboard()
+            )
 
-            f"📌 ارزش هر ژتون: "
-            f"<b>{token_value:,}</b> تومان"
-        )
+        except Exception as error:
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
+            print(
+                f"❌ Wallet error: {error}"
+            )
 
         return
-
 
     # ======================================
     # دعوت دوستان
@@ -756,19 +1268,26 @@ def handle_callback(callback):
 
     if data == "referral":
 
-        text = referral_text(
-            user_id
-        )
+        try:
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
+            text = referral_text(
+                user_id
+            )
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                back_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Referral error: {error}"
+            )
 
         return
-
 
     # ======================================
     # حساب کاربری
@@ -776,29 +1295,36 @@ def handle_callback(callback):
 
     if data == "profile":
 
-        tokens = get_balance(
-            user_id
-        )
+        try:
 
-        text = (
-            "👤 <b>حساب من</b>\n\n"
+            tokens = get_balance(
+                user_id
+            )
 
-            f"🆔 شناسه: "
-            f"<code>{user_id}</code>\n\n"
+            text = (
+                "👤 <b>حساب من</b>\n\n"
 
-            f"🪙 موجودی ژتون: "
-            f"<b>{tokens:,}</b>"
-        )
+                f"🆔 شناسه:\n"
+                f"<code>{user_id}</code>\n\n"
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
+                f"🪙 موجودی ژتون:\n"
+                f"<b>{tokens:,}</b>"
+            )
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                back_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Profile error: {error}"
+            )
 
         return
-
 
     # ======================================
     # جایزه روزانه
@@ -814,15 +1340,22 @@ def handle_callback(callback):
             "به‌زودی می‌تونی هر روز جایزه بگیری! ✨"
         )
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
+        try:
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                back_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Daily error: {error}"
+            )
 
         return
-
 
     # ======================================
     # رتبه‌بندی
@@ -835,18 +1368,26 @@ def handle_callback(callback):
 
             "🥇 رتبه‌بندی به‌زودی فعال می‌شه.\n\n"
 
-            "ببینیم چه کسی بالاترین امتیاز رو می‌گیره! 🔥"
+            "ببینیم چه کسی بالاترین امتیاز "
+            "رو می‌گیره! 🔥"
         )
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
+        try:
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                back_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Ranking error: {error}"
+            )
 
         return
-
 
     # ======================================
     # تاریخچه
@@ -854,21 +1395,96 @@ def handle_callback(callback):
 
     if data == "history":
 
-        text = (
-            "📜 <b>تاریخچه</b>\n\n"
+        try:
 
-            "هنوز فعالیتی ثبت نشده."
-        )
+            transactions = wallet.get_transactions(
+                user_id,
+                10
+            )
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
+        except Exception as error:
+
+            print(
+                f"❌ History load error: {error}"
+            )
+
+            transactions = []
+
+        if not transactions:
+
+            text = (
+                "📜 <b>تاریخچه</b>\n\n"
+                "هنوز فعالیتی ثبت نشده."
+            )
+
+        else:
+
+            text = (
+                "📜 <b>تاریخچه ژتون‌ها</b>\n\n"
+            )
+
+            for item in transactions:
+
+                try:
+
+                    amount = int(
+                        item.get(
+                            "amount",
+                            0
+                        )
+                    )
+
+                except (
+                    TypeError,
+                    ValueError
+                ):
+
+                    amount = 0
+
+                reason = str(
+                    item.get(
+                        "reason",
+                        "فعالیت"
+                    )
+                )
+
+                created_at = str(
+                    item.get(
+                        "created_at",
+                        ""
+                    )
+                )
+
+                if amount >= 0:
+
+                    sign = "+"
+
+                else:
+
+                    sign = ""
+
+                text += (
+                    f"🪙 <b>{sign}{amount:,}</b>\n"
+                    f"📝 {reason}\n"
+                    f"🕐 {created_at}\n\n"
+                )
+
+        try:
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                back_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ History error: {error}"
+            )
 
         return
-
 
     # ======================================
     # راهنما
@@ -883,7 +1499,7 @@ def handle_callback(callback):
             "مشاهده بازی‌های موجود\n\n"
 
             "🪙 <b>کیف پول</b>\n"
-            "مشاهده موجودی ژتون\n\n"
+            "مشاهده ژتون‌های داخل بازی\n\n"
 
             "🎁 <b>جایزه روزانه</b>\n"
             "دریافت پاداش روزانه\n\n"
@@ -895,14 +1511,70 @@ def handle_callback(callback):
             "مشاهده اطلاعات حساب"
         )
 
-        edit_message_text(
-            chat_id,
-            message_id,
-            text,
-            back_keyboard()
-        )
+        try:
+
+            edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                back_keyboard()
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Help error: {error}"
+            )
 
         return
+
+    # ======================================
+    # Callback ناشناخته
+    # ======================================
+
+    print(
+        f"⚠️ Unknown callback: {data}"
+    )
+
+
+# ==========================================
+# پردازش یک Update
+# ==========================================
+
+def process_update(
+    update
+):
+
+    if not isinstance(
+        update,
+        dict
+    ):
+
+        return
+
+    try:
+
+        if "message" in update:
+
+            handle_message(
+                update["message"]
+            )
+
+            return
+
+        if "callback_query" in update:
+
+            handle_callback(
+                update["callback_query"]
+            )
+
+            return
+
+    except Exception as error:
+
+        print(
+            f"❌ Update processing error: {error}"
+        )
 
 
 # ==========================================
@@ -923,23 +1595,36 @@ def run():
 
             result = get_updates(
                 offset=offset,
-                timeout=30
+                timeout=POLL_TIMEOUT
             )
+
+            # ==================================
+            # پاسخ نامعتبر یا None
+            # ==================================
 
             if not result:
 
                 time.sleep(
-                    1
+                    POLL_ERROR_SLEEP
                 )
 
                 continue
 
+            # ==================================
+            # خطای API
+            # ==================================
+
             if not result.get(
-                "ok"
+                "ok",
+                False
             ):
 
+                print(
+                    "⚠️ getUpdates returned an error."
+                )
+
                 time.sleep(
-                    2
+                    POLL_ERROR_SLEEP
                 )
 
                 continue
@@ -949,30 +1634,96 @@ def run():
                 []
             )
 
-            for update in updates:
+            if not isinstance(
+                updates,
+                list
+            ):
 
-                offset = (
-                    update["update_id"] + 1
+                time.sleep(
+                    POLL_ERROR_SLEEP
                 )
 
-                if "message" in update:
+                continue
 
-                    handle_message(
-                        update["message"]
+            # ==================================
+            # پردازش آپدیت‌ها
+            # ==================================
+
+            for update in updates:
+
+                if not isinstance(
+                    update,
+                    dict
+                ):
+
+                    continue
+
+                update_id = update.get(
+                    "update_id"
+                )
+
+                # ==================================
+                # Offset را قبل از پردازش بعدی تنظیم کن
+                # ==================================
+
+                if update_id is not None:
+
+                    try:
+
+                        offset = (
+                            int(update_id) + 1
+                        )
+
+                    except (
+                        TypeError,
+                        ValueError
+                    ):
+
+                        pass
+
+                # ==================================
+                # هر آپدیت جداگانه محافظت شود
+                # ==================================
+
+                try:
+
+                    process_update(
+                        update
                     )
 
-                elif "callback_query" in update:
+                except Exception as error:
 
-                    handle_callback(
-                        update["callback_query"]
+                    print(
+                        f"❌ Single update error: {error}"
                     )
+
+                    time.sleep(
+                        UPDATE_ERROR_SLEEP
+                    )
+
+        except KeyboardInterrupt:
+
+            print(
+                "🛑 Bot stopped."
+            )
+
+            break
 
         except Exception as error:
 
             print(
-                f"❌ Error: {error}"
+                f"❌ Main loop error: {error}"
             )
 
             time.sleep(
-                2
+                POLL_ERROR_SLEEP
             )
+
+
+# ==========================================
+# اجرای مستقیم فایل
+# ==========================================
+
+if __name__ == "__main__":
+
+    run()
